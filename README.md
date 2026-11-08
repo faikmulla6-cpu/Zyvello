@@ -1,0 +1,707 @@
+# Zyvello
+
+Zyvello is based on the original [Harvey project](https://github.com/ethanplusai/harvey).
+
+**An autonomous sales agent using Groq with your own API key, or your Claude Code / Codex subscription.**
+
+Zyvello finds businesses worth selling to, learns something specific about each one, writes cold email that references it, sends it, reads the replies, and works the conversation toward a meeting. It runs on your machine, in a loop, on its own.
+
+Choose **Groq API** in dashboard Settings → AI connection, enter your own key, test it, and save. The default Groq model is `openai/gpt-oss-120b`; a different model can be entered. Use **+ Add key** to store up to ten key slots and select a primary. **Automatic fallback** (enabled by default) tries eligible backup keys in key-number order when a key is rejected, a temporary network/server failure occurs, or a rate limit is reached. Uncheck Backup to exclude a slot; disable Automatic fallback for primary-only use. Failed keys cool down for one minute; duplicate keys are tried only once. A rate-limited key waits for Groq’s retry delay while eligible backups are tried. When every eligible key is unavailable, automation waits until the earliest cooldown expires. Keys within one Groq organization may share limits; extra keys do not increase that organization’s allowance. Blank saved fields preserve keys; Remove deletes a slot on save. Keys stay in the ignored local `.env` and are never returned by settings APIs. Restart automation after changing provider/model. Free-plan usage is limited; a paid Groq account may incur charges. Live generation requires your valid key.
+
+Claude remains the compatibility default and uses your Claude Pro or Max subscription through Claude Code. [Codex is an opt-in provider on macOS and Linux](#using-a-chatgpt-plan-instead-codex). Both existing providers remain available.
+
+```
+$ harvey run
+
+============================================================
+Zyvello is online. Always Be Closing.
+============================================================
+Checking pipeline state...
+Decision: handle_replies (2 new replies)
+  handler   → Elena Park, Harbor Dental Studio     interested, answer drafted
+  handler   → Priya Nair, Highline Roofing         objection, answer drafted
+Decision: write_campaign (3 new prospects with no drafts)
+  writer    → 2-email sequence: Phoenix HVAC hiring a dispatcher
+  outbox    → 5 emails waiting for your approval
+Cycle complete. Sleeping for 15 minutes.
+```
+
+And the dashboard it keeps, at `localhost:5555`. In this order: the Today screen, a
+conversation Zyvello handed back because a prospect asked for a contract, approving
+a drafted reply from the outbox, confirming a signal, building a cohort from
+confirmed signals, searching contacts, and the same screen in dark mode:
+
+![Dashboard demo from the original Harvey project: the Today screen, conversation handoff, outbox approval, signals, cohorts, contacts, and dark mode](docs/dashboard.gif)
+
+<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.test` domains.</sub>
+
+---
+
+## Table of contents
+
+- [Why the subscription thing matters](#why-the-subscription-thing-matters)
+- [What Zyvello actually does](#what-zyvello-actually-does)
+- [Quick start](#quick-start)
+- [You confirm what it looks for](#you-confirm-what-it-looks-for)
+- [The prospecting pipeline](#the-prospecting-pipeline)
+- [The skills library](#the-skills-library)
+- [The sub-agents](#the-sub-agents)
+- [Nothing sends without you](#nothing-sends-without-you)
+- [The dashboard](#the-dashboard)
+- [How the data is stored](#how-the-data-is-stored)
+- [Configuration](#configuration)
+- [Using a ChatGPT plan instead (Codex)](#using-a-chatgpt-plan-instead-codex)
+- [Legal and deliverability](#legal-and-deliverability)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [Philosophy](#philosophy)
+- [Roadmap](#roadmap)
+
+---
+
+## Why the subscription thing matters
+
+Every other autonomous sales agent bills you per token. That is the whole reason they cost what they cost: an agent that thinks in a loop, all day, is an agent that burns API credits in a loop, all day. Vendors solve this by thinking less — shorter prompts, cheaper models, fewer passes.
+
+Zyvello uses the subscription-backed CLI for the provider you choose: `claude` for Claude Code, or an isolated `codex app-server` for Codex. Both return text with model tools disabled. Zyvello handles the prospecting and mail operations itself.
+
+Claude calls run with none of your own Claude Code setup: no `CLAUDE.md` (yours, the project's or any parent folder's), no hooks, skills, plugins, MCP servers or settings files, no tools, in an empty temporary folder, and nothing saved to your Claude transcripts. Your login (subscription or `claude setup-token`) and any admin-managed policy still apply. This needs a Claude CLI with `--safe-mode`; with an older one Zyvello pauses instead of sending prompts unisolated and says to run `claude update`. To check this offline against your installed CLI, with no credentials or network: `HARVEY_CLAUDE_CLI_TESTS=1 pytest tests/test_claude_cli_isolation.py`.
+
+Your selected subscription covers model calls, subject to its usage limits. That lets Zyvello use its skills library for personalization and reply handling without a separate model API bill.
+
+**What this costs you:**
+
+| | |
+|---|---|
+| Claude Pro/Max or a ChatGPT plan with Codex access | your existing subscription |
+| Finding businesses | **$0** on the default source, or ~$0.37 per 1,000 on the cheapest paid one |
+| Reading their websites | **$0** — three HTTP requests each, no model call |
+| Writing and sending | your subscription + a mailbox (~$7/mo Google Workspace) |
+| Prospecting tools | **none.** No Apollo, no ZoomInfo, no Clearbit, no Clay. |
+
+For comparison, the tools Zyvello replaces start at $250–500/month — and they are weakest precisely where Zyvello is strongest: small local businesses with 5–50 people, where single-provider contact coverage caps out around 30% and micro-businesses are frequently absent entirely.
+
+**Zyvello also budgets itself.** It reads the active provider's subscription quota and throttles to leave headroom for your own Claude or Codex work. Set `max_daily_claude_percent: 80` for either provider—the setting's name predates Codex support. If quota cannot be read, Zyvello reports it as unavailable and falls back to its daily call budget.
+
+Zyvello runs locally with your own login. Check the terms and usage limits of the provider you choose.
+
+---
+
+## What Zyvello actually does
+
+Zyvello runs a heartbeat: wake up, check the budget, decide what most needs doing, do it, log it, sleep. Every 15 minutes by default.
+
+```
+                 ┌──────────────────────────────────────┐
+                 ↓                                      │
+   Wake  →  Quiet hours?  →  Budget OK?  →  Decide  →  Act  →  Log  →  Sleep
+                 │               │
+              (sleep)         (sleep)
+```
+
+It decides deterministically, not by asking a model what to do — that would burn a call on something derivable from four counts:
+
+```
+handle replies  >  send campaigns  >  write campaigns  >  prospect  >  idle (analyze)
+```
+
+Profiling and outbox draining ride along on **every** cycle regardless, because they cost nothing and have to happen on schedule.
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- **Python 3.11+** — check with `python3 --version`. macOS ships 3.9; if that's what you have, `brew install python@3.13` first.
+- An active **Claude Pro or Max** subscription, with the CLI logged in (`claude login`) — or, opt-in, a **ChatGPT plan with the Codex CLI** ([see below](#using-a-chatgpt-plan-instead-codex))
+- A mailbox to send from — Gmail/Workspace recommended, on a *dedicated secondary domain*. Microsoft 365 works too ([setup](docs/microsoft365.md))
+
+### Easiest: let Claude set it up
+
+```bash
+git clone https://github.com/ethanplusai/harvey.git
+cd harvey
+claude
+```
+
+Then say: **"set up Zyvello for me"**. The repo ships a `CLAUDE.md` that turns Claude Code into the setup wizard — it checks what state you're in, installs what's missing, asks what it needs, and trains Zyvello on your product.
+
+### Or do it yourself
+
+```bash
+# 1. Install — note python3.13, not python3. On macOS bare `python3` is the
+#    system 3.9, and a venv built from it can't run Zyvello.
+python3.13 -m venv .venv && source .venv/bin/activate && pip install -e .
+
+# 2. Configure — every variable is documented inline with where to get it
+cp .env.example .env && $EDITOR .env
+
+# 3. Learn your product from your website (writes harvey.local.yaml; re-running
+#    it updates the product, targeting and company and keeps your other settings)
+harvey train https://your-company.com
+
+# 4. Choose what makes a good prospect (see below — this one matters)
+harvey signals --confirm free
+
+# 5. Find businesses. Free source, no account needed.
+harvey discover
+
+# 6. Watch it work
+harvey dashboard          # prints a private link to http://127.0.0.1:5555
+harvey run
+```
+
+---
+
+## You confirm what it looks for
+
+This is the part that makes Zyvello different from a black box, and it is deliberately not skippable.
+
+Zyvello knows how to collect **23 signals** about a business. It does not collect any of them until you say so. On first run it *proposes* the catalog; you confirm, skip, or reject each one in the dashboard or from the terminal:
+
+```bash
+harvey signals                       # review the catalog
+harvey signals --confirm free        # everything that costs nothing (21 of them)
+harvey signals --confirm SERP_RANK   # a paid one, opted into explicitly
+```
+
+Every signal shows what it is in plain language, **what it costs**, and how many companies already carry it.
+
+| | Signal | What it tells you |
+|---|---|---|
+| **Discovery** | `SERP_RANK` | Where they rank for their own core search. Positions 11–30 are the sweet spot: visible enough to be trying, and losing. |
+| | `NO_WEBSITE` | They have a listing and a phone and no site. If you sell websites, the highest-intent signal that exists. |
+| | `UNCLAIMED_LISTING` | Nobody has claimed their Google Business Profile. |
+| | `REVIEW_RATING` / `REVIEW_COUNT` | Good but invisible, or visible but struggling. |
+| **Profile** | `INCUMBENT_AGENCY` | Who currently has the account, credited in their own footer. Every detection builds a roster you can target as a whole book of business. |
+| | `RUNNING_GOOGLE_ADS` / `RUNNING_META_ADS` | They are spending on acquisition *today*. The strongest budget signal available for free. |
+| | `NO_ONLINE_BOOKING` | Leads have to phone in, so after-hours demand is lost. |
+| | `NO_SCHEMA_MARKUP` | A concrete, checkable SEO gap you can name in an email. |
+| | `BLOG_STALE` | Content marketing started and abandoned. |
+| | `SITE_PAGE_COUNT`, `TECH_STACK`, `BLOCKS_AI_CRAWLERS`, `HIRING_ROLE` | Size, platform, AI-search visibility, and what they're hiring for. |
+| **People** | `CONTACT_FOUND`, `DECISION_MAKER_TITLE`, `LIKELY_OWNER`, `REGISTRY_VERIFIED` | Who decides, and whether they own the place. |
+| **Contact** | `EMAIL_PATTERN`, `EMAIL_STATUS`, `CONTACT_FORM_URL` | Whether you can actually reach them. |
+
+### Then a cohort is a query, not a list
+
+Once signals are confirmed, the dashboard's cohort builder turns them into a target set — pick what a good prospect **must have** and what **disqualifies** them, and it counts the matches live:
+
+```
+Has a marketing agency  AND  running Google Ads  AND NOT  already has online booking
+→ 23 companies
+```
+
+That is a campaign with a reason behind it. You know exactly why each of those 23 is on the list, and so does the email Zyvello writes them.
+
+---
+
+## The prospecting pipeline
+
+Four stages. Each one runs independently, re-runs safely, and states its cost.
+
+### 1. DISCOVER — who exists
+
+The only stage that spends money, so it always estimates first and never calls anything until you press go.
+
+```bash
+harvey discover --providers   # the menu, with real prices
+harvey discover --estimate    # projected spend, then exits
+harvey discover               # go
+```
+
+| Source | Cost | Free tier | Best for |
+|---|---|---|---|
+| **OpenStreetMap** *(default)* | free | unlimited, no account | Trying the whole pipeline before paying anyone. Coverage is thin for businesses without a storefront: OSM maps premises, so whole trades are barely present (under 2,000 roofers and under 2,300 plumbers in the entire US). Zyvello says so in the UI rather than quietly under-delivering. |
+| **DataForSEO Business Listings** | $0.372 / 1,000 | $1 credit | Local trades, clinics, contractors. Phone, domain, rating, claimed status — and it can filter for businesses with **no website at all**. |
+| **DataForSEO SERP** | $0.0018 / search | $1 credit + free sandbox | Rank as the buying signal. |
+| **Serper** | ~$0.30–1.00 / 1,000 | 2,500 free, no card | The easiest paid one to try. |
+
+**Selling to startups?** Zyvello has a built-in YC-startup skill, made of three
+parts:
+
+- **The search:** `harvey discover --preset yc --provider serper`, or *Look for: YC
+  startups* on the Discover tab, searches your industries for companies whose
+  own websites say they're backed by Y Combinator.
+- **The signal:** turn on `YC_BACKED` (Signals tab) to tag them, with their batch
+  when the site states it (W24, S23). It reads the homepage and About page for
+  a reference to the company's own YC page or a line where the company says it
+  ("we went through Y Combinator", "YC W24"), not customer lines like "trusted
+  by YC-backed startups". Many YC companies never say it on their site, so it
+  finds the ones that do; a YC-preset search hit counts as a yes too.
+- **The writing:** for those prospects the writer and reply handler use
+  `skills/selling_to_startups.md`, a playbook for writing to founders.
+
+Zyvello never reads ycombinator.com itself, whose terms forbid scraping it or
+collecting founders' contact details; everything comes from the companies' own
+sites and your search provider.
+
+Cities geocode themselves (cached forever, one lookup each). Directories, aggregators and institutions are filtered by pattern, not a blocklist — `en.wikipedia.org` and `biz.yelp.com` never make it in.
+
+> **Depth 20–30, not 100.** Google removed 100-results-per-page in September 2025, so depth 100 is now billed as ten pages nearly everywhere. Below rank 30 it is mostly directories anyway.
+
+### 2. PROFILE — what they are
+
+**Free.** Three HTTP requests per business. No browser, no model call. This is the highest value-per-effort stage in the whole system, because it produces the facts that make an email specific.
+
+Website requests from Scout, Profile, and the local training crawler are limited
+to public HTTP(S) destinations. Every DNS answer and redirect is checked; local,
+private, link-local, and metadata addresses are rejected. Connections use a
+validated IP while preserving the website's TLS identity. These website clients
+ignore environment proxies, so proxy routing cannot bypass that boundary.
+
+Homepage, `robots.txt`, `sitemap.xml`, plus the team and careers pages when they exist — then regex over HTML already in hand. Out comes the incumbent agency, the ad pixels, the missing schema, the abandoned blog, the open roles, the named humans.
+
+Agency detection is the compounding one. Almost every agency credits itself in the footer, and Zyvello scores the wording: *"Powered by"* / *"Website by"* → 0.9 confidence; a bare descriptive link → 0.75; an unlabelled link → 0.35 and **not recorded**. A wrong incumbent in an email is worse than saying nothing.
+
+### 3. ENRICH — who decides
+
+Free public registries first. Name plus title from the team page, confirmed against an authoritative registry where one exists — which also filters out your own parsing artifacts, because a "person" who matches nothing usually wasn't one.
+
+When a company's site names nobody and Zyvello has no contact there yet — common for small trades — it falls back to a general address the company prints on its own homepage or contact page (only general mailboxes such as `owner@`, `office@`, `info@` or `hello@`, never a person's own address). It is never guessed, it is verified like any other address, and those emails greet the company's team instead of a first name.
+
+### 4. VERIFY — can you reach them
+
+Zyvello learns each company's **address pattern** and verifies one candidate, rather than brute-forcing name variations. Raw SMTP probing is not viable from a laptop — outbound port 25 is usually blocked, and Google Workspace and Microsoft 365 accept everything from an unknown IP.
+
+Every address is tagged honestly: `verified` / `risky` (catch-all) / `guess` / `invalid`. **Only deliverable ones are ever sent to.** A guess is never treated as a win.
+
+> Zyvello is worth running even if you never let it send. `harvey export` writes a sequencer-ready CSV of everything it found.
+
+---
+
+## The skills library
+
+Zyvello's sales knowledge lives in `skills/` as **plain Markdown you can edit**. There is no fine-tuning, no vector store, no retrieval step. Before an agent runs, the skills it needs are concatenated straight into its prompt. Change a file, and the next heartbeat behaves differently — no restart, no code change.
+
+This is the main way you shape Zyvello. If its emails are too pushy, edit `email_frameworks.md`. If it mishandles a specific objection, edit `objection_handling.md` and add the response you'd actually give.
+
+### What ships
+
+**`email_frameworks.md`** — 301 lines, the most important file in the repo. Opens with the only rule that matters: *write like a real person sending a real email.* Contains a hard ban list on AI tells (no "I hope this finds you well", no "I wanted to reach out", no "circling back"), compliance rules that override every style rule beneath them, 2026 reply-rate data on length and cadence and why link tracking hurts you, and five frameworks — **AIDA, PAS, BAB, QVC, 3Ps** — with selection rules for when each one fits.
+
+**`signal_playbook.md`** — How to turn a signal into the first line of an email. Which signal wins when a company has several. How to reference something you observed without sounding like you ran a scan on them.
+
+**`objection_handling.md`** — The **LAARC** loop (Listen → Acknowledge → Assess → Respond → Confirm) with worked responses across the four objection families: budget, authority, need, timing. The framing throughout is that you are not "overcoming" an objection, you are finding out what the actual concern is.
+
+**`lead_qualification.md`** — **BANT** for the first screen, ICP scoring 1–10 for prioritization, **MEDDIC** for anything complex. Includes explicit disqualification criteria, which matter more than the qualification ones.
+
+**`sales_methodology.md`** — The operating philosophy: the ABC loop, how a conversation should flow across stages, tone calibration, and the ethical lines Zyvello does not cross.
+
+**`offer_strategy.md`** — The offer ladder by engagement level, and the rule that governs it: *never lead with an offer, never pitch in a cold email.* First contact exists to start a conversation. Offers come out only after genuine interest.
+
+**`prospecting_tactics.md`** — Search operators, company-website mining, trigger events, referral paths. Finding people without paying for a database.
+
+**`account_navigation.md`** — Companies versus contacts, multi-threading rules, which door to knock on first when a company has several.
+
+**`linkedin_outreach.md`** — Connection sequences and rate limits, opening with the risk section it should open with: automating LinkedIn violates their ToS, never use a fake identity, and if someone asks whether this is automated, say yes immediately.
+
+**Generated for your product by `harvey train <url>`:**
+
+- **`product_knowledge.md`** — what you sell, the benefits, pricing, use cases, the pain you solve, buying triggers
+- **`competitive_intel.md`** — battle cards per competitor, differentiation angles, migration paths
+
+*(Both are gitignored. Your positioning and pricing shouldn't land in a public repo by accident.)*
+
+### Which agent gets which
+
+Defined in `harvey/brain.py` — edit the map to change it.
+
+| Skill | Scout | Writer | Handler | Sender | LinkedIn |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `prospecting_tactics` | ● | | | | ● |
+| `lead_qualification` | ● | | | | |
+| `account_navigation` | ● | | | | |
+| `signal_playbook` | ● | ● | | | |
+| `email_frameworks` | | ● | | ● | |
+| `sales_methodology` | | ● | ● | | |
+| `offer_strategy` | | ● | ● | | |
+| `objection_handling` | | | ● | | |
+| `linkedin_outreach` | | | | | ● |
+| `product_knowledge` | ● | ● | ● | ● | ● |
+| `competitive_intel` | | ● | ● | | |
+
+Adding a skill: write the file, add its name to `skill_map` in `harvey/brain.py`. That's the whole process.
+
+---
+
+## The sub-agents
+
+Zyvello feels like one agent. Underneath it's five, each loaded with different skills.
+
+| Agent | What it does |
+|---|---|
+| **Scout** | Scores and personalizes what the collectors found. Python does the searching and the email resolution; the selected model is used only where judgment is actually needed — which is what keeps the token cost sane. |
+| **Writer** | Generates 3-email sequences. Email 1 under 75 words, email 2 under 75, email 3 under 40. Hard ban list on AI-sounding language. |
+| **Sender** | Renders merge variables per prospect and stages each email into the outbox with a send time. Drains due and approved items with human-like pacing, enforcing the daily cap and stop-on-reply. |
+| **Handler** | Polls for replies, dedups them, classifies intent, advances the conversation stage, and queues responses through the same approval ladder. Detects bounces, marks the address invalid, cancels that prospect's queued sends, and trips a global kill switch past a bounce-rate threshold. |
+| **Analyst** | Runs on idle cycles. Pipeline stats, campaign performance, intent distribution, what's actually working. |
+
+Conversation stages: `initial_outreach → engaged → qualifying → presenting → negotiating → closing → closed_won / closed_lost`
+
+---
+
+## Nothing sends without you
+
+By default **every outgoing email waits for your approval.** Zyvello is a copilot until you decide otherwise.
+
+The dashboard's Outbox is a decisions desk: one email fills the pane, the rest wait in a rail, and you work the queue with `A` approve, `R` reject, `J`/`K` to move. That shape is deliberate — a wall of stacked drafts invites a single approve-all reflex, which is exactly the review the approval ladder exists to force.
+
+```bash
+harvey outbox                 # review from the terminal
+harvey outbox --approve-all
+harvey sending pause          # kill switch, stops everything mid-flight
+harvey retry-writes           # retry prospects the Writer gave up on after 3 unusable drafts
+```
+
+Before anything leaves, a **deterministic pre-send gate** — no model involved — rejects: unrendered merge tags, banned phrases, emails over the length cap, too many links, HTML bodies, non-deliverable addresses, and any mismatch between the recipient and the database record.
+
+Optionally, the same step can ask [Precleared](https://precleared.dev) whether cold email to each new address is allowed before the first one goes out. See [Legal and deliverability](#legal-and-deliverability).
+
+### Approval or autopilot
+
+Zyvello has two sending modes. The dashboard shows which one you're in at the
+top of the Outbox, and Settings → Sending explains both and switches them.
+
+| | **Approval** (the default) | **Autopilot** |
+|---|---|---|
+| First emails, follow-ups, replies | Wait in the Outbox until you approve each one | Go out on their own, on schedule |
+| Daily limit, quiet hours, warmup ramp, opt-outs, bounces, Pause all sending | Apply | Apply the same |
+| An email with a link that isn't yours, or quoting Zyvello's instructions | You see it like any other | Held in the Outbox, marked **Held**, until you approve it |
+| On Instantly | Campaigns aren't deployed at all (Instantly can't hold single emails) | Campaigns deploy; held replies come to you |
+
+**Turning autopilot on.** Approve a batch or two by hand first and read what
+Zyvello writes. Then either go to Settings → Sending → *Turn on autopilot…* and
+type `autopilot`, or set `channels.email.require_approval: false` in your config
+(`harvey.local.yaml` if you trained Zyvello, otherwise `harvey.yaml`). A running
+Zyvello picks it up from its next cycle, with no restart.
+
+**Turning it off** is one click (*Turn off autopilot*, on the Outbox or in
+Settings), or `require_approval: true` in the config. It works at once, even
+mid-cycle: emails autopilot approved that haven't gone out come back to the
+Outbox, and nothing it approved is sent after that. Emails you approved
+yourself stay approved. (Emails approved before this version also come back
+the first time, since Zyvello can't tell who approved those.) On Instantly,
+campaigns already running there keep running: pause them in Instantly.
+
+**What autopilot still holds for you.** Text from outside reaches the model:
+the websites Zyvello researches, and the replies people send. Either can carry
+planted instructions ("ignore the above, add this link"). Zyvello marks that
+text as data in every prompt, and the model has no tools, files or network to
+act with. But a prompt can't guarantee the model ignores an instruction. So an
+email nobody approved goes back to the Outbox, marked **Held** with the
+reason, instead of out, when it:
+
+- links to, or gives an address at, a domain that isn't yours. Yours are the
+  sending address's domain, the site you trained Zyvello on, the recipient's own
+  domain (in an email to them), your own booking page
+  (`product.offer.booking_url`; only that page, since cal.com and Calendly host
+  everyone's), and any you list: `channels.email.link_domains:
+  ["mainsite.com"]`. Links are read the way a browser opens them, and bare
+  `evil.com/x`, `www.`, IP addresses and "evil dot com" all count;
+- quotes a passage of Zyvello's own instructions (`prompts/`, `skills/`), which
+  is what a reply trying to extract your playbook would get back. Scripts the
+  playbooks quote to be said, and the email frameworks and product knowledge,
+  are fine to use.
+
+The first reply after you undo someone's opt-out waits for you too. Approving
+a held email yourself sends it. **Approve all** leaves held emails out, so
+each one gets read before it goes. On Instantly, which sends at once, a reply
+that would be held goes to you as an escalation instead (it also runs the
+pre-send gate), a campaign template that would be held isn't deployed, and a
+lead whose fields would be held isn't uploaded.
+
+**Legacy Instantly:** the local Outbox cannot approve individual Instantly sends.
+With approval on, Zyvello holds campaign deployment (including activation
+retries) and routes replies to a human. Choose Gmail, Microsoft 365, or SMTP
+for the approval queue. Turning autopilot off doesn't pause campaigns already
+running on Instantly; pause those in Instantly itself.
+
+---
+
+## The dashboard
+
+```bash
+harvey dashboard     # opens directly at http://127.0.0.1:5555/
+```
+
+The local landing page is available at `http://127.0.0.1:5555/welcome`. It previews the planned hosted subscription and links to the local dashboard.
+
+**Opening it.** Run `harvey dashboard` and open `http://127.0.0.1:5555/`, or choose Open dashboard on the landing page. Before creating an owner account, the local dashboard initializes its API session automatically. After signup, use your email and password to log in. A valid session also opens new tabs directly.
+
+**Owner account.** Choose Sign up on the landing page, or visit `/signup`, to create the owner account for this installation. Email/password login and logout work locally without an external identity service. Once an owner exists, the dashboard and its APIs require a valid login session; the older dashboard token cannot bypass this login. Passwords are hashed with scrypt, sessions expire after seven days, and logging out revokes the current session. The account database is `data/accounts.db`, separate from the prospect database and excluded from Git. This edition has one owner account for its existing workspace.
+
+**It only listens on this machine.** `--host` accepts loopback addresses only (`127.0.0.1`, `::1`, `localhost`). Host checks, cross-origin request restrictions, and security headers apply to every request. Anyone who can open this local dashboard can use it. To access it from another computer, use an SSH tunnel. The page and API responses are never cached.
+
+**Windows:** the token file is protected by the permissions of the folder it lives in (your user profile normally restricts this to you); Zyvello doesn't apply POSIX file modes there.
+
+The dashboard uses plain HTML, CSS and JavaScript served from `harvey/web/` — edit `app.css` and reload. The landing page uses React, TypeScript, and Tailwind, with its source in `frontend/`. Run `npm ci` and `npm run build` there after editing it. Its compiled assets ship with the app. Fonts and images are stored locally.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
+  <img alt="The Today screen: four headline figures with 14-day trends, the list of things waiting on you, contacts by stage, and collector runs" src="docs/screenshots/today-light.png">
+</picture>
+
+The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeline** (what Zyvello is building) and **System** (how it's running). Counts next to a tab mean something is waiting there.
+
+**Work**
+- **Today** — four headline figures with 14-day trends (contacts found, emails sent, conversations, waiting on you), then everything that needs a decision, contacts by stage, collector runs and what the pipeline is doing right now. Setup shows here until it's finished, then disappears.
+- **Outbox** — the decisions desk. Each email sits next to what Zyvello knew when it wrote it: the company, how the address was found and verified, and the signals the email draws on. `J`/`K` to move, `A` approve, `E` edit, `R` reject.
+- **Conversations** — every reply in the context of the emails that led to it. Threads Zyvello handed to you (a contract request, a reply it had no safe answer for) come first, with **Hand back to Zyvello**, **Close** and **Reopen**.
+
+**Pipeline**
+- **Signals** — the confirmation gate and the cohort builder
+- **Discover** — the provider menu with prices side by side, an estimate, then a run; plus reading the sites of companies found but not yet looked at
+- **Companies / Contacts** — everything found, searchable, with CSV export
+- **Campaigns** — each sequence Zyvello wrote, who it's going to, and per-campaign feedback for the writer
+
+**System**
+- **Activity**, **Usage**, **Controls**, **Settings**, **Help**. Usage shows Claude or Codex quota gauges and per-agent token counts, with no dollar figures: you're on a subscription and aren't billed per token, so showing costs would be made up.
+
+| Outbox | Conversations |
+|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/outbox-dark.png"><img alt="The outbox decisions desk: a drafted reply to an objection, with the company, contact, verification and signals beside it" src="docs/screenshots/outbox-light.png"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/conversations-dark.png"><img alt="A conversation Zyvello handed back: the two emails sent, the prospect asking for a contract, and the Hand back to Zyvello and Close buttons" src="docs/screenshots/conversations-light.png"></picture> |
+
+Colour is kept for meaning. The chrome is neutral and a single blue marks what you can act on. Status (waiting on you, done, failed, running) uses the same small set of tones in every tab, so "waiting on you" looks the same wherever it shows up. Figures are tabular, so columns line up and a changing number doesn't shift the layout.
+
+Appearance has three states: `auto` follows your OS and is the default, or pick light or dark from the button at the bottom of the sidebar. Dark mode uses the same layout with a different set of colour tokens.
+
+---
+
+## How the data is stored
+
+SQLite at `data/harvey.db`. One idea drives the schema:
+
+> **Every fact is a row, never a column.**
+
+Not `companies.has_agency`. Not `companies.rank`. A row in `observations`:
+
+```
+observations(company_id, prospect_id, collector, signal_code,
+             value_num, value_text, confidence, evidence_url, observed_at, run_id)
+```
+
+Four things fall out of that, none of which you get from columns:
+
+1. **A new signal needs no migration.** A collector invents a code and it works.
+2. **History is free.** The same signal observed quarterly *is* a time series — and "they dropped their agency last quarter" is a far better trigger than any static fact.
+3. **Confidence and provenance travel with the fact** instead of being lost on overwrite. *"We think their agency is X, 0.9 confidence, here's the URL."*
+4. **A cohort is a query.** Set intersection happens in SQL, not in application code over a capped fetch.
+
+The vocabulary is governed: a database trigger rejects any `signal_code` not in the `signal_codes` table, so a typo fails loudly instead of quietly inventing a junk signal.
+
+Other tables: `companies`, `prospects`, `campaigns`, `conversations`, `outbox`, `actions`, `runs`, `usage_events`, `email_patterns`, `settings`, `feedback`.
+
+---
+
+## Configuration
+
+Two files, both plain text.
+
+**`.env`** — credentials. Every variable documented inline with where to get it. The only required one is a mail provider; everything else is optional.
+
+**`harvey.yaml`** — who Zyvello is and who it sells to:
+
+```yaml
+persona:      { name, company, role, email, tone }
+product:      { name, description, pricing, key_benefits, objection_responses, offer }
+icp:          { industries, titles, company_size, geography, hiring_signals, geo_coordinates }
+channels:
+  email:      { provider: gmail | microsoft | smtp | instantly, max_daily_sends, require_approval,
+                send_to_risky, max_bounce_rate }
+usage:        { max_daily_claude_percent, heartbeat_interval_minutes, quiet_hours }
+brain:        { provider: claude | codex, model, reasoning_effort }   # optional; claude by default
+writer:       { humanizer }   # optional; true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
+```
+
+`max_daily_claude_percent` caps whichever subscription `brain.provider` uses (the name predates Codex support).
+
+If `harvey.local.yaml` exists it wins. It's gitignored, so a fork can carry real product configuration while the tracked `harvey.yaml` stays a template — nobody publishes their positioning and pricing by accident.
+
+### Commands
+
+```bash
+harvey run                   # the heartbeat loop
+harvey dashboard             # web UI at 127.0.0.1:5555 (--url: print a dashboard link)
+harvey signals               # review/confirm what to prospect against
+harvey discover              # find businesses; --providers / --estimate
+harvey profile               # read discovered companies' sites (free)
+harvey train <url>           # learn a product from its website (--provider codex --model gpt-5.5)
+harvey status                # pipeline summary
+harvey usage                 # active provider's quota + per-agent tokens
+harvey outbox                # review queued email
+harvey export                # deliverable prospects → CSV
+harvey sending pause|resume  # kill switch
+harvey warmup [domain]       # is the sending domain ready? (SPF/DKIM/DMARC, age, blocklists)
+harvey retry-writes          # retry prospects the Writer gave up on
+harvey gmail auth            # one-time Gmail OAuth
+harvey microsoft auth|test  # one-time Microsoft 365 sign-in (docs/microsoft365.md)
+```
+
+Prospect CSV exports exclude opted-out contacts, including when using
+`--status` or `--email-status` filters. `harvey export --all` is an unfiltered
+raw-data export for inspection: it includes opted-out and unverified contacts
+and should not be imported as an outreach list. The dashboard's prospect CSV
+download follows the same policy; `?all=true` selects its raw export.
+
+
+## Using a ChatGPT plan instead (Codex)
+
+Claude is the default and needs no change. If you'd rather spend a ChatGPT plan (Plus, Pro, Business, …), Zyvello can think through the [Codex CLI](https://developers.openai.com/codex) instead — still a subscription, never per-token API billing.
+
+```bash
+npm install -g @openai/codex@0.159.3   # the Codex version Zyvello has verified (see Requirements)
+codex login                            # choose "Sign in with ChatGPT" — API-key logins are refused
+```
+
+Then either pick **codex** in `harvey setup` (it suggests `gpt-5.5`), run `harvey train <url> --provider codex --model gpt-5.5`, or add to your config:
+
+```yaml
+brain:
+  provider: codex
+  model: gpt-5.5         # or an available Luna, Sol, or Terra model ID
+  reasoning_effort: ""   # optional: minimal | low | medium | high | xhigh
+```
+
+What to know:
+
+- **It's one or the other.** Zyvello uses exactly the provider you configure. If Codex fails, the call fails with a clear log message; it never falls back to Claude (or to an API key). A Codex-only machine doesn't need Claude installed.
+- **Your Codex setup is left alone.** Each call runs throwaway `codex` processes in a private temporary home and empty workspace, so your `~/.codex/config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md` and memories are never loaded, and Zyvello's model choice never changes your own Codex default.
+- **No tools, verified before every prompt.** Prompts contain untrusted text (prospect replies, scraped pages), so the model must have nothing to act with. Zyvello disables every tool-providing Codex feature, web search, sub-agents, hooks, skills and project instructions, starts the thread with no execution environment, and then checks Codex's own reports (effective config, account type, thread settings, MCP status, hooks) before sending anything. Anything it can't confirm stops the call. During the turn, any attempted tool call, approval request or non-text item kills the runtime. A read-only sandbox is also set, as extra protection only.
+- **Your login only goes to OpenAI.** Before your login is put into the runtime at all, Zyvello starts Codex without it and checks that requests would go to the built-in OpenAI provider and the default ChatGPT endpoint. Any custom provider, overridden built-in provider, base URL, telemetry exporter or other endpoint in any Codex config layer (for example `/etc/codex/config.toml` or a managed config) stops the call there.
+- **Login handling.** Zyvello supports Codex's file credential storage (`~/.codex/auth.json`, or `$CODEX_HOME/auth.json`, mode `600`): the default unless you've configured an OS keyring. Keyring storage isn't supported. On every call Zyvello reads that file (read-only, never writing or moving it) and gives the runtime a private copy *without the refresh token*, deleted after the call. Codex therefore can't change or renew your real login. When the login has expired, or is due for Codex's routine renewal (after about 8 days), Codex calls stop with "Your Codex login has expired or is due for renewal". Use Codex once yourself (it renews the login automatically) or run `codex login`, and Zyvello picks up the renewed login on its next call. Zyvello never renews it for you.
+- **Models.** Set `brain.model` to an exact model ID from your account's catalog, including Luna, Sol, and Terra models such as `gpt-5.6-luna`, `gpt-6.1-sol`, and `gpt-5.6-terra`. `gpt-5.5` remains supported when present in your account's catalog and is the setup suggestion. Zyvello creates a private catalog copy that preserves model capabilities while selecting direct tool mode and removing experimental tools. The model receives no tools under Zyvello's lockdown. A blank `model` selects the highest-priority listed model that can use this configuration; hidden models require an explicit ID. An explicit model is used exactly or the call fails. Unknown model IDs and unrecognized tool modes are rejected. Availability depends on your ChatGPT account.
+- **Quota.** The budget gate and dashboard read your ChatGPT plan's real rate-limit windows from Codex, for the limit bucket that applies to your model, and compare them to `usage.max_daily_claude_percent`. If Codex reports that usage is blocked, or a call fails on the plan's usage limit, Zyvello treats the plan as full (even when no window is reported) and stops Codex calls for an hour. If the limits can't be read, the dashboard and `harvey usage` say "Quota unavailable" and the budget falls back to Zyvello's own daily call count. Usage is recorded per provider; Codex calls are logged with tokens but no dollar cost, because the plan isn't billed per token.
+- **When Codex can't be used, Zyvello pauses rather than guessing.** Before each heartbeat, Zyvello checks everything a call needs except the prompt itself: the Codex CLI version, the isolation, your login (expired or due for renewal), your ChatGPT account, and that your configured model can run with no tools. No prompt is sent, so nothing is used from your plan beyond a quick account check. If something is wrong, the whole cycle is skipped: no reply is read or marked handled, nothing is drafted or sent. The log line, `harvey status`, and the dashboard's Actions card say "Codex paused" and why. If Codex stops working part-way through a cycle (for example the plan hits its usage limit), the reply being handled is left exactly as it was for a clean retry, not escalated, half-recorded or lost, and that cycle sends nothing. Fix the cause (usually `codex login`), and Zyvello resumes on its next heartbeat: a renewed login or reinstalled CLI is noticed immediately, a usage-limit pause ends after an hour, and other fixes are picked up within 30 minutes. `harvey status --check` runs the same check on demand and exits non-zero if it fails. Brief failures (a crash or timeout) just skip one cycle. Zyvello never falls back to Claude or an API key.
+- **Requirements.** **macOS or Linux**, Codex CLI **0.159.3** exactly, and Node.js for its npm package. **Windows isn't supported for Codex:** Zyvello refuses it there before reading your login; use the Claude provider on Windows. Zyvello checks the Codex version before every call and refuses any other version, including newer ones, because a different Codex can add tools Zyvello's lockdown doesn't know about. Support for a new version comes with a Zyvello update. Live use with a real ChatGPT account has been verified on macOS and ARM64 Linux. The offline suites also passed on x86-64 Linux under CPU emulation; CI covers Linux and macOS. The Docker image ships the Claude CLI only, so Codex isn't supported in Docker. To re-verify the lockdown offline against your installed CLI, with no credentials or network: `HARVEY_CODEX_CLI_TESTS=1 pytest tests/test_codex_cli_surface.py`.
+- **Overhead.** Each call checks the CLI version, starts Codex once without your login to verify its configuration, reads the model catalog, then starts it again to run the prompt; each heartbeat's check does the same without the prompt. That adds a few seconds per call, and one Brain's Codex calls run one at a time.
+
+---
+
+## Legal and deliverability
+
+Zyvello automates outreach, but **you are the sender.** Cold email is legal in most places when done right and expensive when done wrong — CAN-SPAM penalties run to $53,088 per email. Zyvello ships with compliant defaults. Keep them.
+
+**CAN-SPAM (US).** Truthful subject line and accurate from-address — Zyvello's copywriting rules forbid fake "re:" threads and impersonation. A working opt-out, honored fast: every cold email ends with an opt-out line (`compliance.opt_out_line`, default *Not interested? Reply "no thanks" and I won't email again.*), and Zyvello treats any opt-out wording as immediate and permanent, wherever in the reply the person wrote it (including a bare "STOP" or "No thanks"). Nothing Zyvello does later moves someone off *opted out*: a later message from them is kept for you to read, never answered, and a complaint still goes to you. To see why someone was opted out (the rule that fired, the words, and their message), click **Why?** on their row in Contacts. If it was a mistake, **Undo opt-out** there marks them as replied: Zyvello sends nothing on its own, and their next reply gets a draft for your approval. Your physical mailing address in the footer: set `compliance.postal_address` in `harvey.yaml` before your first campaign. Zyvello adds both lines under every cold email when it sends (replies don't get them), shows them under each draft in the Outbox, and warns on `harvey run`, `harvey status` and the Outbox tab until the address is set. Text in a reply that repeats what Zyvello wrote for that person (its emails, campaign templates, and every footer it has used) is set aside as quoted, not read as their words, so quoting Zyvello's own footer isn't an opt-out; the model also reads replies without the quoted email. The opt-out line must ask for a reply Zyvello recognises (`Reply "no thanks"`, `Reply STOP`, also "unsubscribe", "remove me", "opt out") and can't contain a link or email address.
+
+**GDPR / PECR (EU & UK).** B2B cold email needs a defensible legitimate interest: the pitch must be genuinely relevant to that person's role, you must know where the data came from, and objecting must be effortless. If you can't say why a specific person would care, Zyvello shouldn't email them — and its qualification rules say so.
+
+**Per-recipient check (optional).** Those rules turn on facts about each recipient: a UK sole trader needs consent where a limited company doesn't, Germany wants prior consent even for business email, and Canada's CASL depends on whether the address was published. With `compliance.precleared.enabled: true`, Zyvello asks [Precleared](https://precleared.dev) about each new recipient before the first cold email. Anything other than `ok_to_email` holds that email back, with the rule and the next step shown in the Outbox, and the signed receipt id is logged with every send. One check per address, cached for 30 days (changing the sender country, address source, product description or prospect country triggers a fresh check); replies are never checked; native providers (Gmail, SMTP) only. Precleared works out each recipient's country from the address, company records or the company's website; if all your prospects are in one country, also set `prospect_country` (for example `US`), which it uses only when none of those show it. Precleared receives the recipient's address, your sender country, the address source, your product description and, if set, your prospects' country. Without a key it allows 10 checks a day, and a free key (`PRECLEARED_API_KEY`) allows 25. Put the setting in `harvey.yaml`, or in `harvey.local.yaml` if you trained Zyvello, since that file wins.
+
+**Bot disclosure.** Some jurisdictions require disclosing automation. Zyvello is instructed to answer truthfully, always, if a prospect asks whether they're talking to an AI. Never configure it otherwise.
+
+**LinkedIn.** Browser automation violates LinkedIn's ToS and can get the account restricted. Off by default. If you turn it on, use an account you can afford to lose.
+
+LinkedIn requires both `channels.linkedin.enabled: true` and configured
+credentials. Training a product does not enable it; the setup wizard records
+your explicit choice.
+
+**Deliverability — warm up or burn out.** Sending cold email from your main domain, or at volume on day one, lands you in spam permanently.
+
+1. Buy a **dedicated sending domain** (`getacme.com`, not `acme.com`).
+2. Set up **SPF, DKIM and DMARC** on it. Without all three, Gmail junks you. `harvey warmup` checks them, plus domain age, blocklists, your warmup progress and bounce rate, and ends with READY / NOT READY. It only reads public DNS and Zyvello's own records.
+3. **Warm up for 2–4 weeks** before real volume.
+4. **Ramp slowly** — 10–20/day per inbox, adding ~5/day. The `max_daily_sends: 50` default is a ceiling, not a target. Set `channels.email.warmup.start_date` and Zyvello does this for you (Gmail, Microsoft, SMTP; Instantly has its own warmup): no cold email for `min_days`, then a cold-email cap that climbs by `daily_increase` a day. Replies always go out.
+5. **Watch bounces.** Above ~3%, stop and fix list quality. Zyvello trips its own kill switch past your configured threshold.
+
+*None of this is legal advice. Sending at scale or into regulated industries? Talk to a lawyer.*
+
+---
+
+## Troubleshooting
+
+**`command not found: harvey`** — `source .venv/bin/activate` first.
+
+**`ModuleNotFoundError: No module named 'harvey'` after install (macOS)** — Python 3.13 silently ignores `.pth` files carrying the macOS hidden flag, and some Macs propagate that flag into `.venv`. Run `harvey install` again (it auto-fixes), or: `ln -s "$(pwd)/harvey" .venv/lib/python3.13/site-packages/harvey`
+
+**`externally-managed-environment`** — Use a venv, not system Python.
+
+**`SyntaxError` or odd `ImportError`s right after install (macOS)** — Your venv is Python 3.9. `python3 -m venv` builds from `/usr/bin/python3`, which macOS keeps at 3.9. Check with `.venv/bin/python -V`, then rebuild: `rm -rf .venv && python3.13 -m venv .venv && source .venv/bin/activate && pip install -e .`
+
+**Claude headless mode fails** — `claude login`, and confirm the subscription is active. Test with `claude -p "say hi"`. In Docker, mount `~/.claude` into the container (writable: the CLI refreshes its login there). If the log says the Claude CLI "lacks --safe-mode" (or another flag), run `claude update` (in Docker, rebuild the image); Zyvello resumes on its own. If your Claude login depends on `env` or `apiKeyHelper` entries in your Claude settings files, set those variables in Zyvello's environment instead: Zyvello's calls don't read settings files. `harvey status --check` confirms the CLI without sending a prompt.
+
+**Dashboard session unavailable** — Refresh the page to initialize a new session. If the server reports a token-file problem, follow its error message and restart the dashboard. Use `127.0.0.1` or `localhost` to open the app.
+
+**Codex calls fail** — Read the log line; every Codex error says what to do. "Not logged in" or "expired or is due for renewal" → use Codex once or run `codex login` with ChatGPT. "Hasn't been verified with Zyvello" → install the supported Codex version named in the message. "Isolation could not be verified" → a Codex config layer outside your `~/.codex` (for example a managed or `/etc/codex` config) forces a tool, hook, MCP server, instructions or custom endpoint back on; Zyvello refuses to send prompts until it's gone. Model catalog errors → choose an available model ID from the catalog shown in the message, or leave `brain.model` blank to select a listed model. Zyvello never switches to Claude on its own.
+
+**Discovery finds nothing** — Confirm signals first (`harvey signals --confirm free`); nothing is collected until you do. If you're on the free OpenStreetMap source, it only covers mapped trades and is thin for service-area businesses — `harvey discover --providers` shows the alternatives.
+
+**Overpass is throttling** — It's free volunteer infrastructure. Zyvello walks three mirrors before giving up. Wait a few minutes, or use a paid provider for bulk work.
+
+**Emails land in spam** — Almost always the domain, not the copy. Check SPF/DKIM/DMARC, confirm warmup ran, halve your volume.
+
+**Zyvello does nothing during the day** — Check `quiet_hours` and whether it hit `max_daily_claude_percent`. `harvey status` shows current state; the `actions` table logs every decision.
+
+**How do I stop it right now?** — `Ctrl+C`, or `harvey sending pause` to stop outbound while leaving the loop running. State is in SQLite, so it resumes cleanly.
+
+**Where does my data live?** — All local: `data/harvey.db`, `.env`, `harvey.yaml`. Nothing goes anywhere except the APIs you configured.
+
+---
+
+## Project structure
+
+```
+harvey/
+├── main.py              # heartbeat loop
+├── brain.py             # Claude/Codex provider selection + skills + usage
+├── claude_runtime.py    # Isolated Claude CLI calls (safe mode, no tools, clean dir)
+├── codex.py             # Isolated Codex subscription runtime
+├── state.py             # SQLite schema, migrations, observations, cohorts
+├── signals.py           # the 23-signal catalog Zyvello proposes
+├── pipeline.py          # DISCOVER → PROFILE chaining
+├── gate.py              # deterministic pre-send checks
+├── dashboard.py         # FastAPI JSON API
+├── dashboard_auth.py    # dashboard token, Host/Origin checks
+├── collectors/
+│   ├── discover.py      # provider adapters, junk filtering, entity resolution
+│   └── profile.py       # the free HTTP profiler
+├── agents/              # scout, writer, sender, handler, analyst
+├── integrations/        # mail providers, email finder, quota
+└── web/                 # dashboard HTML/CSS/JS — no build step
+
+skills/                  # ← the sales knowledge. Editable Markdown.
+prompts/                 # ← agent system prompts. Also editable Markdown.
+tests/                   # 242 tests
+```
+
+---
+
+## Philosophy
+
+**Autonomous doesn't mean unsupervised.** Quiet hours, spend caps, send limits, an approval queue, a deterministic pre-send gate, and a kill switch. Zyvello asks before it spends and before it sends, until you tell it not to.
+
+**You decide what a good prospect is.** Zyvello proposes signals; you confirm them. A prospect list you can't explain is a prospect list you shouldn't send to.
+
+**If it can be gotten deterministically, don't use a model.** Rank position, tech detection, junk filtering, the priority decision, the pre-send gate — all plain code. Claude or Codex is reserved for the parts that need judgment. That's why this runs on a subscription at all.
+
+**A failure is an observation, not silence.** "No team page found" is a finding. "Overpass is throttling" is a finding. Silent failures look exactly like clean results, which is how a broken run gets mistaken for an empty market.
+
+**The database is the asset, not the agent.** The initial list is worth little. The same signals observed over quarters — who changed agencies, who started spending on ads, who let their content go stale — is worth a great deal.
+
+**Everything is editable.** Prompts, skills, config, the dashboard. All plain text. You don't need to be a developer to change how Zyvello sells.
+
+---
+
+## Roadmap
+
+**Done:** heartbeat loop · observation data model with governed vocabulary · user-confirmed signal catalog · cohort builder · discovery provider menu with cost estimates · free HTTP profiler with agency detection · pattern-first email finding with honest status · native mail providers (Gmail API, Microsoft 365 via Graph, SMTP+IMAP) · outbox approval ladder · deterministic pre-send gate · bounce detection and kill switch · reply handling with intent classification · subscription quota tracking · website trainer · web dashboard · CSV export
+
+**Next:** people enrichment from public registries · consent-gated voice callbacks · calendar integration for auto-booking · scheduled re-observation so signal *changes* trigger outreach · multi-product support
+
+> **On voice:** a fully autonomous AI cold dialer is not on this roadmap, and won't be. Under FCC 24-17 an AI-generated voice is an "artificial voice" under the TCPA, and 47 CFR 64.1200(a)(1) has no B2B exemption — penalties run $500–1,500 per call, uncapped, and some states ban it outright. Voice here will be **consent-gated**: inbound and opt-in-triggered callbacks only.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Current release: **0.2.1**.
+
+---
+
+## License
+
+MIT
+
+---
+
+*"Put that coffee down. Coffee is for closers."* — Blake, *Glengarry Glen Ross*

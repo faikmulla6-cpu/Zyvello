@@ -1,0 +1,84 @@
+
+<div class="section-head"><div><h2>Help</h2><p>What Zyvello is, how it works, and how to fix the usual problems.</p></div></div>
+<div class="help-section">
+<h2>What is Zyvello?</h2>
+<p>Zyvello is an autonomous AI sales agent. Once set up, Zyvello runs on its own: finds people who match your ideal customer, writes personalized cold emails, sends them through your email platform, reads every reply, handles objections, and works toward booking a meeting. You review everything through this dashboard.</p>
+<p>Zyvello runs on your Claude Max subscription (or, if you opt in, your ChatGPT plan through Codex), so there are no extra AI costs. Everything stays on your machine in one folder.</p>
+</div>
+<div class="help-section">
+<h2>Getting started</h2>
+<p>There are three things to do:</p>
+<pre>1. Go to the Settings tab and connect an email provider (Gmail recommended)
+2. Train Zyvello on your product (through Claude or the command line)
+3. Go to the Controls tab and click Start</pre>
+<p>Today shows exactly what's done and what still needs to happen.</p>
+</div>
+<div class="help-section">
+<h2>Where everything lives</h2>
+<p>Everything Zyvello needs is inside this one project folder. Nothing is stored elsewhere.</p>
+<div class="table-card">
+<table class="file-table">
+<tr><td>.env</td><td>Your API keys and credentials (never shared or committed)</td></tr>
+<tr><td>local configuration file</td><td>Your product info, target customers, and behavior settings</td></tr>
+<tr><td>skills/</td><td>Sales knowledge files. Edit these to change how Zyvello writes and sells.</td></tr>
+<tr><td>skills/product_knowledge.md</td><td>Everything Zyvello knows about your product (auto-generated from training)</td></tr>
+<tr><td>prompts/</td><td>Prompt templates for each agent. Advanced customization.</td></tr>
+<tr><td>Local prospect database</td><td>Database with all prospects, campaigns, and conversations</td></tr>
+<tr><td>Local activity log</td><td>Log file showing what Zyvello is doing</td></tr>
+</table>
+</div>
+</div>
+<div class="help-section">
+<h2>Getting your API keys</h2>
+<details>
+<summary>Instantly API key (legacy)</summary>
+<div class="faq-body">
+<p>Instantly is the legacy sending option; Gmail or SMTP is recommended.</p>
+<p>1. Sign up at <a href="https://instantly.ai" rel="noopener" target="_blank">instantly.ai</a> (you need the Growth plan for API access)</p>
+<p>2. Go to Settings &gt; Integrations</p>
+<p>3. Copy your API key</p>
+<p>4. Paste it in the Settings tab here</p>
+</div>
+</details>
+<details>
+<summary>LinkedIn credentials (optional)</summary>
+<div class="faq-body">
+<p>If you want Zyvello to find prospects on LinkedIn, enter your LinkedIn email and password. Zyvello uses a real browser to search LinkedIn like a human would, with random delays and rate limits to avoid detection.</p>
+<p>If you skip this, Zyvello will find prospects through Google searches and company website scraping instead.</p>
+</div>
+</details>
+<details>
+<summary>Cloudflare Browser Rendering (optional)</summary>
+<div class="faq-body">
+<p>This is only used during product training (when Zyvello crawls your website to learn about your product). It handles JavaScript-heavy websites that a basic crawler can't read.</p>
+<p>1. Sign up at <a href="https://dash.cloudflare.com" rel="noopener" target="_blank">Cloudflare</a> (paid Workers plan, ~$5/month)</p>
+<p>2. Go to Workers &amp; Pages &gt; Browser Rendering</p>
+<p>3. Create an API token with Browser Rendering Edit permissions</p>
+<p>4. Enter your Account ID and API Token in the Settings tab</p>
+<p>Without this, Zyvello uses a built-in crawler that works fine for most websites but can't render JavaScript.</p>
+</div>
+</details>
+</div>
+<div class="help-section">
+<h2>Common issues</h2>
+<details>
+<summary>"local command not found"</summary>
+<div class="faq-body">You need to activate the virtual environment first: <code>source .venv/bin/activate</code></div>
+</details>
+<details>
+<summary>Instantly API returns 401</summary>
+<div class="faq-body">Your API key is wrong, or you need the Growth plan (the free plan doesn't include API access). Double-check the key in Settings &gt; Integrations in your Instantly dashboard.</div>
+</details>
+<details>
+<summary>Claude headless mode fails</summary>
+<div class="faq-body">Make sure you've run <code>claude login</code> in your terminal and have an active Claude Max subscription. Zyvello uses your existing subscription, not a separate API key.</div>
+</details>
+<details>
+<summary>Codex calls fail</summary>
+<div class="faq-body">With <code>brain.provider: codex</code>, set <code>brain.model</code> to an available model ID, including Luna, Sol, or Terra (for example <code>gpt-6.1-sol</code>), or leave it blank to select a listed model. Zyvello runs these models without tools; <code>gpt-5.5</code> also remains supported when present in your account's catalog. Run <code>codex login</code> and choose "Sign in with ChatGPT" (API-key logins are refused). Zyvello never renews your Codex login: if the log says it has expired or is due for renewal, use Codex once or run <code>codex login</code>. Zyvello needs Codex CLI 0.159.3 on macOS or Linux (Codex isn't supported on Windows; use Claude there) and refuses other versions. While Codex can't be used, Zyvello pauses (Today shows "Codex is paused" and why), leaves replies and queued emails untouched, and resumes once it's fixed; <code>the local status check</code> checks on demand. If the log says isolation could not be verified, a Codex config layer is forcing a tool, hook, MCP server or custom endpoint back on — Zyvello refuses to send prompts until it is removed. Zyvello never falls back to Claude on its own.</div>
+</details>
+<details>
+<summary>Zyvello isn't finding prospects</summary>
+<div class="faq-body">Check that your ICP (ideal customer profile) in local configuration file has realistic titles, industries, and geography. If LinkedIn is set up, check that the credentials are correct. Check the Activity tab to see what Zyvello has been trying to do.</div>
+</details>
+</div>
