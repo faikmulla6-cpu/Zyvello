@@ -1,6 +1,8 @@
 """Connectivity probe tests do not contact Modal or any external service."""
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
@@ -25,6 +27,16 @@ class HostedHealthTests(unittest.TestCase):
         for path in ("/", "/api/auth/session", "/api/auth/signup", "/api/auth/login", "/api/send"):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 404)
+
+    def test_staging_frontend_is_opt_in_and_not_indexed(self):
+        with TemporaryDirectory() as folder:
+            Path(folder, "index.html").write_text("<html>Staging only</html>", encoding="utf-8")
+            client = TestClient(create_app(static_dir=folder))
+            response = client.get("/login")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("noindex", response.headers["X-Robots-Tag"])
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
 
 if __name__ == "__main__":
