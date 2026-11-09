@@ -5,6 +5,16 @@ import { authClient, hostedSignUpEnabled } from "./auth-client";
 
 type Account = { id: string; email: string; name?: string };
 type Page = "login" | "signup" | "app";
+// Neon documents emailOtp.verifyEmail(), but the current exported vanilla
+// client declaration omits that plugin method. Keep the mismatch isolated.
+type EmailOtpVerifier = {
+  emailOtp: {
+    verifyEmail(input: { email: string; otp: string }): Promise<{
+      data?: unknown;
+      error?: { message?: string } | null;
+    }>;
+  };
+};
 
 // Separate from the single-owner local API. Deliberately no Harvey/dashboard
 // imports, and no access to customer data until workspace APIs are verified.
@@ -81,7 +91,9 @@ export function HostedAuthPage({ page }: { page: Page }) {
     setBusy(true);
     setError("");
     try {
-      const result = await authClient.emailOtp.verifyEmail({ email: email.trim(), otp: otp.trim() });
+      const result = await (authClient as typeof authClient & EmailOtpVerifier).emailOtp.verifyEmail({
+        email: email.trim(), otp: otp.trim(),
+      });
       if (result.error) throw new Error(result.error.message || "The code could not be verified.");
       setOtp("");
       setAwaitingVerification(false);
