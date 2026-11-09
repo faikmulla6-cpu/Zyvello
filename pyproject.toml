@@ -35,9 +35,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+hosted = [
+    "PyJWT[crypto]>=2.9,<3",
+]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
+    # The existing all-test CI also collects tests/test_hosted_auth.py.
+    "PyJWT[crypto]>=2.9,<3",
 ]
 
 [project.urls]
