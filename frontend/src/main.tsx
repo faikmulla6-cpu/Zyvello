@@ -5,13 +5,14 @@ import { DemoOne } from "@/demo";
 import "@/styles/globals.css";
 
 const AuthComponent = lazy(() => import("@/components/ui/sign-up").then(module => ({ default: module.AuthComponent })));
+const pagePath = window.location.pathname.replace(/\/+$/, "") || "/";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MotionConfig reducedMotion="user">
       <Suspense fallback={<p role="status" className="p-8 text-center">Loading Zyvello…</p>}>
-        {window.location.pathname === "/signup" || window.location.pathname === "/login"
-          ? <AuthComponent brandName="Zyvello" mode={window.location.pathname === "/signup" ? "signup" : "login"} />
+        {pagePath === "/signup" || pagePath === "/login"
+          ? <AuthComponent brandName="Zyvello" mode={pagePath === "/signup" ? "signup" : "login"} />
           : <DemoOne />}
       </Suspense>
     </MotionConfig>
