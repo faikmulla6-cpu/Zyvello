@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { BrandIcon } from "@/components/ui/brand-icon";
 import { authClient, hostedSignUpEnabled } from "./auth-client";
+import { HostedWorkspaceDashboard } from "./HostedWorkspaceDashboard";
 
 type Account = { id: string; email: string; name?: string };
 type Page = "login" | "signup" | "app";
@@ -177,7 +178,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
         <a href="/welcome" className="inline-flex items-center gap-2 text-sm text-gray-300"><ArrowLeft className="h-4 w-4" /> Home</a>
       </header>
       <main className="relative z-10 flex flex-1 items-center justify-center px-5 py-12">
-        <section className="auth-glass-card w-full max-w-md rounded-3xl border border-white/15 bg-black/50 p-6 shadow-2xl backdrop-blur-2xl sm:p-10" aria-label="Hosted Zyvello account">
+        <section className={`auth-glass-card w-full rounded-3xl border border-white/15 bg-black/50 p-6 shadow-2xl backdrop-blur-2xl sm:p-10 ${page === "app" ? "max-w-5xl" : "max-w-md"}`} aria-label="Hosted Zyvello account">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/25 px-3 py-1 text-xs text-violet-200"><ShieldCheck className="h-3.5 w-3.5" /> Hosted private beta</p>
           {checking ? <p role="status" className="text-sm text-gray-300">Checking your session…</p>
             : !authClient ? <><h1 className="text-2xl font-semibold">Account access unavailable</h1><p className="mt-4 text-gray-300">This preview has not been connected to an authentication endpoint.</p></>
@@ -185,12 +186,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
               <h1 className="text-3xl font-semibold">You're already signed in.</h1>
               <p className="mt-4 text-gray-300">{account.email}</p>
               <a href="/app" className="button-light mt-6 w-full">Open beta account</a>
-            </> : page === "app" && account ? <>
-              <h1 className="text-3xl font-semibold">You're signed in.</h1>
-              <p className="mt-4 break-words text-gray-300">{account.name || account.email}<span className="mt-1 block text-sm text-gray-400">{account.email}</span></p>
-              <p className="mt-6 rounded-xl border border-amber-300/20 bg-amber-300/5 p-4 text-sm text-gray-300">The hosted workspace, background jobs and outreach are not enabled yet. No emails or AI actions will be run from this preview.</p>
-              <button className="button-light mt-6 w-full" type="button" disabled={busy} onClick={() => void signOut()}>{busy ? "Signing out…" : "Sign out"}</button>
-            </> : page === "app" ? <>
+            </> : page === "app" && account ? <HostedWorkspaceDashboard onSignOut={() => void signOut()} signingOut={busy} /> : page === "app" ? <>
               <h1 className="text-3xl font-semibold">Sign in required</h1>
               <p className="mt-4 text-sm text-gray-300">A verified account is required before opening your workspace.</p>
               <a href="/login" className="button-light mt-6 w-full">Go to login</a>

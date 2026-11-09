@@ -13,6 +13,7 @@ import psycopg
 
 DB_URL = os.environ.get("TEST_POSTGRES_URL")
 API_URL = os.environ.get("TEST_POSTGRES_API_URL")
+WORKER_URL = os.environ.get("TEST_POSTGRES_WORKER_URL")
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
 
@@ -26,7 +27,7 @@ def execute_sql_file(conn: psycopg.Connection, filename: str) -> None:
                 cursor.execute(statement.strip() + ";")
 
 
-@unittest.skipUnless(DB_URL and API_URL, "Disposable PostgreSQL service not configured")
+@unittest.skipUnless(DB_URL and API_URL and WORKER_URL, "Disposable PostgreSQL service not configured")
 class RequestScopedRlsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -34,9 +35,11 @@ class RequestScopedRlsTests(unittest.TestCase):
         execute_sql_file(cls.owner, "0001_workspace_jobs.sql")
         with cls.owner.cursor() as cursor:
             cursor.execute("CREATE ROLE zyvello_api_staging LOGIN PASSWORD 'ci-local-only'")
+            cursor.execute("CREATE ROLE zyvello_worker_staging LOGIN PASSWORD 'ci-local-only'")
             cursor.execute("GRANT USAGE ON SCHEMA zyvello TO zyvello_api_staging")
             cursor.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA zyvello TO zyvello_api_staging")
         execute_sql_file(cls.owner, "0002_request_scoped_rls.sql")
+        execute_sql_file(cls.owner, "0003_workspace_api_and_worker.sql")
         with cls.owner.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO zyvello.workspaces (id, slug, name, created_by_auth_user_id)
@@ -93,6 +96,82 @@ class RequestScopedRlsTests(unittest.TestCase):
                     WHERE idempotency_key = 'job-a'
                 """)
                 self.assertEqual(affected.rowcount, 0)
+
+    def test_creator_can_create_a_workspace_and_membership_atomically(self):
+        new_id = "00000000-0000-4000-8000-0000000000c3"
+        with psycopg.connect(API_URL) as conn:
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                conn.execute("""
+                    INSERT INTO zyvello.workspaces (id,slug,name,created_by_auth_user_id)
+                    VALUES (%s,'rls-created-a','Created by A','test-auth-a')
+                """, (new_id,))
+                conn.execute("""
+                    INSERT INTO zyvello.memberships (workspace_id,auth_user_id,role)
+                    VALUES (%s,'test-auth-a','owner')
+                """, (new_id,))
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.workspaces WHERE id=%s", (new_id,)).fetchone()[0], 1)
+        self.check_visibility("test-auth-b", ["rls-fixture-b"], ["job-b"])
+
+    def test_b_cannot_join_a_workspace_or_impersonate_creator(self):
+        from psycopg.errors import InsufficientPrivilege
+        with psycopg.connect(API_URL) as conn:
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-b",))
+                    conn.execute("""
+                        INSERT INTO zyvello.memberships (workspace_id,auth_user_id,role)
+                        VALUES ('00000000-0000-4000-8000-0000000000a1','test-auth-b','owner')
+                    """)
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-b",))
+                    conn.execute("""
+                        INSERT INTO zyvello.workspaces (slug,name,created_by_auth_user_id)
+                        VALUES ('impersonation-attempt','No','test-auth-a')
+                    """)
+
+    def test_a_can_enqueue_only_health_jobs_in_own_workspace(self):
+        from psycopg.errors import InsufficientPrivilege
+        with psycopg.connect(API_URL) as conn:
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                conn.execute("""
+                    INSERT INTO zyvello.jobs (workspace_id,kind,idempotency_key)
+                    VALUES ('00000000-0000-4000-8000-0000000000a1','workspace_health','health-a')
+                """)
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                    conn.execute("""
+                        INSERT INTO zyvello.jobs (workspace_id,kind,idempotency_key)
+                        VALUES ('00000000-0000-4000-8000-0000000000b2','workspace_health','wrong-tenant')
+                    """)
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                    conn.execute("""
+                        INSERT INTO zyvello.jobs (workspace_id,kind,idempotency_key)
+                        VALUES ('00000000-0000-4000-8000-0000000000a1','send_email','forbidden-action')
+                    """)
+
+    def test_worker_can_update_jobs_but_cannot_touch_other_tables(self):
+        from psycopg.errors import InsufficientPrivilege
+        with psycopg.connect(WORKER_URL) as conn:
+            with conn.transaction():
+                affected = conn.execute("""
+                    UPDATE zyvello.jobs SET status='running', attempts=attempts+1,
+                    leased_by='ci-worker', lease_until=now()+interval '1 minute'
+                    WHERE workspace_id='00000000-0000-4000-8000-0000000000b2'
+                      AND idempotency_key='job-b'
+                """)
+                self.assertEqual(affected.rowcount, 1)
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT * FROM zyvello.memberships")
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("INSERT INTO zyvello.jobs(workspace_id,kind,idempotency_key) VALUES ('00000000-0000-4000-8000-0000000000b2','workspace_health','forbidden')")
 
 
 if __name__ == "__main__":
