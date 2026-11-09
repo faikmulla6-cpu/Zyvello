@@ -435,7 +435,9 @@ The local landing page is available at `http://127.0.0.1:5555/welcome`. It previ
 
 **Windows:** the token file is protected by the permissions of the folder it lives in (your user profile normally restricts this to you); Zyvello doesn't apply POSIX file modes there.
 
-The dashboard uses plain HTML, CSS and JavaScript served from `harvey/web/` — edit `app.css` and reload. The landing page uses React, TypeScript, and Tailwind, with its source in `frontend/`. Run `npm ci` and `npm run build` there after editing it. Its compiled assets ship with the app. Fonts and images are stored locally.
+The dashboard uses plain HTML, CSS and JavaScript served from `harvey/web/` — edit `app.css` and reload. The landing page uses React, TypeScript, and Tailwind, with its source in `frontend/`. Run `npm ci` and `npm run build:app` there after editing it. Its compiled assets ship with the app. Fonts and images are stored locally.
+
+For standalone static hosting, use root directory `frontend`, build command `npm run build`, and output directory `dist`. This publishes the landing frontend and its public branding assets. Authentication, dashboard APIs, and automation still require the Python backend; static hosting alone does not run those services.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">

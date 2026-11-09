@@ -23,7 +23,7 @@ The development server previews the landing page at its printed URL. To test
 dashboard links and authentication, build and open the Python app.
 
 ```powershell
-npm run build
+npm run build:app
 cd ..
 harvey dashboard
 ```
@@ -32,6 +32,11 @@ Open `http://127.0.0.1:5555/welcome`. Vite compiles the page into
 `harvey/web/landing/`, which is included in the Python package and Docker image.
 Commit these built assets with source changes so Python users can open the
 landing page without Node.js.
+
+For Hostinger static publishing, keep root `frontend`, build command `npm run build`,
+and output directory `dist`. The standalone build uses root-relative asset URLs
+and copies public branding assets. Python APIs and automation require a separate
+backend; this static build does not provide those services.
 
 ## Components and styles
 
