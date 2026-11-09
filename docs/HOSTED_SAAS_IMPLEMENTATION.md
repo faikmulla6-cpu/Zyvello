@@ -71,3 +71,23 @@ Status: implementation baseline, not a release approval.
 - No production DNS switch, live deployment, or public checkout.
 - No migration or deletion of local customer data without a tested export/backup/rollback path.
 - No real outreach sends during automated tests.
+
+## Confirmed current hosting: Hostinger Business Web Hosting
+
+Hostinger's current official support documentation confirms:
+- Business Web Hosting supports managed Node.js web applications, including React/Vite frontends and supported Node.js backends.
+- Python, FastAPI, Django and Flask require VPS Hosting; Hostinger Web/Cloud hosting does not provide the root access needed for Python runtimes and dependencies.
+- Managed Node.js Web/Cloud apps do not support inbound WebSockets or always-running background workers. Requests have a 120-second timeout. Node.js cron jobs are available, but each scheduled run stops after 30 minutes.
+- Therefore, the current Hostinger Business plan is suitable to retain the existing public frontend, but it is not a supported home for this repository's FastAPI API or its persistent Python automation worker.
+
+Deployment decision:
+1. Keep `zyvello.pro` and its current Hostinger deployment unchanged.
+2. Do not attempt to convert the Python engine into a Node.js rewrite just to fit the shared hosting plan.
+3. Evaluate a separate free/low-cost runtime for the FastAPI API and worker, plus managed PostgreSQL. Treat any free tier as staging/private-beta infrastructure until sleep, capacity, persistence, backups, security and usage limits are verified.
+4. Keep DNS and production traffic unchanged until staging tests pass and the user explicitly approves a deployment.
+5. Hostinger may optionally serve a separate Node.js frontend/API gateway later, but it must not become a workaround that exposes local SQLite, process-wide secrets or worker state to multiple customers.
+
+Official Hostinger references reviewed 9 November 2026:
+- https://www.hostinger.com/support/which-programming-languages-and-frameworks-are-supported-at-hostinger/
+- https://www.hostinger.com/support/hostinger-node-js-limits-for-web-and-cloud-plans/
+- https://www.hostinger.com/support/how-to-run-cron-jobs-for-node-js-websites-at-hostinger/
