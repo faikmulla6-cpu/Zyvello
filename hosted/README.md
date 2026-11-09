@@ -8,12 +8,28 @@ Neon Managed Auth owns its separate `neon_auth` schema. Store the authenticated
 Neon Auth user ID in `auth_user_id`; never let the browser choose another user
 ID or workspace without server-side membership verification.
 
-The initial tables have PostgreSQL row-level security enabled with **no
-policies**. This intentionally denies non-owner database roles until a
-least-privilege API/worker role and tested policies are added. Database owners
-can still bypass this preliminary RLS configuration; it is *not* a substitute
-for request-level workspace authorization. Do not connect the production API
-using the database owner credential.
+Migration `0001` enables RLS on the operational tables with no policies by
+default. Migration `0002_request_scoped_rls.sql` additionally protects migration
+history and allows **read-only** access for the non-owner `zyvello_api_staging`
+role only when an authenticated user belongs to the workspace. It grants no
+customer mutation permissions. The API role cannot create objects in the
+`zyvello` schema or read the `neon_auth` schema.
+
+The API must verify a real Neon JWT first and run a **parameterized**
+`SELECT set_config('zyvello.auth_user_id', $1, true)` with the verified JWT
+subject inside the same SQL transaction as its data queries. Never interpolate
+identity strings into SQL. This application-controlled setting is **not itself a secure
+identity credential**. Someone with direct access to the database login can
+set it to another ID; never expose a database connection string to the browser
+or use it as a substitute for API-side JWT checks. Database owners bypass the
+current RLS configuration; do not use the owner credential in the hosted API.
+
+Migration 0002 was first tested on the dedicated Neon
+`dev-tenant-rls-20261109` branch using two synthetic users, workspaces and
+inert `test_noop` jobs. The API role saw only the matching workspace/job for
+each identity and no tenant rows when identity was unset. It saw no migration
+history and had zero non-SELECT RLS policies. These are database tests, not
+end-to-end customer login or API authorization tests.
 
 Job rows are inert. No worker consumes the queue yet, and no sending or reply
 handling has changed. Before activating workers, implement transactional job
@@ -46,8 +62,9 @@ Once the staging build is deployed with optional static preview assets,
 `/login`, `/signup`, `/app` and `/welcome` serve the frontend. HTML is marked
 noindex and never cached. Public registration remains disabled.
 
-Remaining requirements: provision a staging test user/invite, configure and
-verify trusted origins for the staging browser, exercise sign-in, OTP, session,
-logout, expiry and revocation against real Neon, create a least-privilege DB
-role, enforce workspace memberships, connect a database-backed API, then
-test durable worker jobs. Do not call the staged identity API production ready.
+Remaining requirements: provision a staging test user/invite, exercise sign-in,
+OTP, session, logout, expiry and revocation against real Neon, connect the
+JWT-verified request context to a database-backed API, and then test the entire
+tenant boundary from an authenticated browser. Build separate restricted worker
+permissions and durable jobs only after that. Do not call the staged identity
+API production ready.
