@@ -16,7 +16,10 @@ type Job = {
 
 async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   if (!authClient) throw new Error("Authentication is unavailable");
-  const token = await authClient.getJWTToken();
+  // Neon Auth's Better Auth adapter exposes the signed token on its session.
+  // The SDK's internal getJWTToken() reads this exact field.
+  const session = await authClient.getSession();
+  const token = session.data?.session?.token;
   if (!token) {
     throw new Error("Your session could not be verified. Please sign in again.");
   }
