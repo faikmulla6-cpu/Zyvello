@@ -74,7 +74,8 @@ export function HostedAuthPage({ page }: { page: Page }) {
       }
       const session = await authClient.getSession();
       if (session.error || !session.data?.session || !session.data?.user) {
-        setMessage("Account created or accepted. Please sign in after verifying your email.");
+        if (page === "signup") setMessage("Account created. Verify your email, then sign in.");
+        else setError("Sign-in could not be confirmed. Please check browser cookie settings and retry.");
         return;
       }
       window.location.assign("/app");
@@ -96,8 +97,8 @@ export function HostedAuthPage({ page }: { page: Page }) {
       });
       if (result.error) throw new Error(result.error.message || "The code could not be verified.");
       setOtp("");
-      setAwaitingVerification(false);
-      setMessage("Email verified. Please sign in to continue.");
+      const session = await authClient.getSession();
+      window.location.replace(session.data?.session && session.data.user ? "/app" : "/login");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to verify your code.");
     } finally {
@@ -135,7 +136,11 @@ export function HostedAuthPage({ page }: { page: Page }) {
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/25 px-3 py-1 text-xs text-violet-200"><ShieldCheck className="h-3.5 w-3.5" /> Hosted private beta</p>
           {checking ? <p role="status" className="text-sm text-gray-300">Checking your session…</p>
             : !authClient ? <><h1 className="text-2xl font-semibold">Account access unavailable</h1><p className="mt-4 text-gray-300">This preview has not been connected to an authentication endpoint.</p></>
-            : page === "app" && account ? <>
+            : page !== "app" && account ? <>
+              <h1 className="text-3xl font-semibold">You're already signed in.</h1>
+              <p className="mt-4 text-gray-300">{account.email}</p>
+              <a href="/app" className="button-light mt-6 w-full">Open beta account</a>
+            </> : page === "app" && account ? <>
               <h1 className="text-3xl font-semibold">You're signed in.</h1>
               <p className="mt-4 break-words text-gray-300">{account.name || account.email}<span className="mt-1 block text-sm text-gray-400">{account.email}</span></p>
               <p className="mt-6 rounded-xl border border-amber-300/20 bg-amber-300/5 p-4 text-sm text-gray-300">The hosted workspace, background jobs and outreach are not enabled yet. No emails or AI actions will be run from this preview.</p>
