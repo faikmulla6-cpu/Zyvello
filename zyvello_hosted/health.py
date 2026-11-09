@@ -58,6 +58,11 @@ def create_app(*, auth_base_url: str | None = None, static_dir: str | None = Non
     if static_dir and Path(static_dir).is_dir():
         app.mount("/static/landing", StaticFiles(directory=static_dir), name="staging-static")
 
+        if Path(static_dir, "favicon.svg").is_file():
+            @app.get("/static/favicon.svg", include_in_schema=False)
+            async def favicon() -> FileResponse:
+                return FileResponse(Path(static_dir) / "favicon.svg", media_type="image/svg+xml")
+
         for page in ("/login", "/signup", "/app", "/welcome"):
             app.add_api_route(
                 page,

@@ -31,11 +31,13 @@ class HostedHealthTests(unittest.TestCase):
     def test_staging_frontend_is_opt_in_and_not_indexed(self):
         with TemporaryDirectory() as folder:
             Path(folder, "index.html").write_text("<html>Staging only</html>", encoding="utf-8")
+            Path(folder, "favicon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
             client = TestClient(create_app(static_dir=folder))
             response = client.get("/login")
             self.assertEqual(response.status_code, 200)
             self.assertIn("noindex", response.headers["X-Robots-Tag"])
             self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(client.get("/static/favicon.svg").status_code, 200)
             self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
 

@@ -13,6 +13,7 @@ image = (
     .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3")
     .add_local_python_source("zyvello_hosted")
     .add_local_dir("harvey/web/landing", remote_path="/app/zyvello_frontend")
+    .add_local_file("harvey/web/favicon.svg", remote_path="/app/zyvello_frontend/favicon.svg")
 )
 
 
