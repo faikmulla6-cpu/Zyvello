@@ -1,70 +1,124 @@
-# Hosted database foundation (staging only)
+# Zyvello hosted SaaS — staging runbook and launch gates
 
-`migrations/0001_workspace_jobs.sql` creates a separate `zyvello` schema for
-hosted workspace identities, membership roles and durable job metadata. It does
-**not** migrate or replace the local SQLite database, and contains no secrets.
+Status: **private staging deployed, not customer-production-ready** (2026-11-09).
 
-Neon Managed Auth owns its separate `neon_auth` schema. Store the authenticated
-Neon Auth user ID in `auth_user_id`; never let the browser choose another user
-ID or workspace without server-side membership verification.
+The original single-owner Harvey CLI/dashboard, SQLite state, prospecting,
+provider integrations and Groq/Claude/Codex code remain in the repository.
+None of the legacy engine is imported or executed by the hosted API. Razorpay
+and all payment logic are explicitly deferred until the owner supplies keys.
 
-Migration `0001` enables RLS on the operational tables with no policies by
-default. Migration `0002_request_scoped_rls.sql` additionally protects migration
-history and allows **read-only** access for the non-owner `zyvello_api_staging`
-role only when an authenticated user belongs to the workspace. It grants no
-customer mutation permissions. The API role cannot create objects in the
-`zyvello` schema or read the `neon_auth` schema.
+## Current staging architecture
 
-The API must verify a real Neon JWT first and run a **parameterized**
-`SELECT set_config('zyvello.auth_user_id', $1, true)` with the verified JWT
-subject inside the same SQL transaction as its data queries. Never interpolate
-identity strings into SQL. This application-controlled setting is **not itself a secure
-identity credential**. Someone with direct access to the database login can
-set it to another ID; never expose a database connection string to the browser
-or use it as a substitute for API-side JWT checks. Database owners bypass the
-current RLS configuration; do not use the owner credential in the hosted API.
+- **UI**: React/Vite app with `VITE_ZYVELLO_HOSTED_MODE=true`, public Neon Auth
+  base URL, and public signup disabled. Hosted `/app` shows a private workspace
+  and safe job history. This is NOT the full Harvey product dashboard.
+- **Auth**: Neon Managed Better Auth (`neon_auth` schema), email verification,
+  signed JWT session, and server-side JWKS signature/issuer/audience/expiry
+  verification before every protected API request.
+- **API**: Modal FastAPI `zyvello-staging` (`zyvello_hosted/health.py`), using
+  only the restricted `zyvello_api_staging` database credential. The browser
+  never receives a database URL, signing key or AI key.
+- **Data**: Neon PostgreSQL staging `zyvello` schema, `workspaces`,
+  `memberships`, `jobs`, and migrations. Database RLS restricts every API
+  transaction to the verified JWT subject through transaction-local
+  `zyvello.auth_user_id`; parameterized SQL is mandatory.
+- **Worker**: Modal `process_jobs` function, using a DIFFERENT restricted
+  `zyvello_worker_staging` database credential. It reads/updates only the
+  durable jobs queue, claims via `FOR UPDATE SKIP LOCKED`, and retries or
+  dead-letters unsuccessful attempts. The sole allowed kind is
+  `workspace_health`: a local, inert diagnostic.
+- **Costs**: Modal workspace `zyvello` is separate from ClipKaro; no always-on
+  containers and no periodic worker schedule currently. Expect cold starts.
+  Starter included compute/credits are finite, not a production uptime or
+  free-unlimited-use guarantee.
 
-Migration 0002 was first tested on the dedicated Neon
-`dev-tenant-rls-20261109` branch using two synthetic users, workspaces and
-inert `test_noop` jobs. The API role saw only the matching workspace/job for
-each identity and no tenant rows when identity was unset. It saw no migration
-history and had zero non-SELECT RLS policies. These are database tests, not
-end-to-end customer login or API authorization tests.
+### Database migrations
 
-Job rows are inert. No worker consumes the queue yet, and no sending or reply
-handling has changed. Before activating workers, implement transactional job
-claims with leases, idempotent side effects, retry/dead-letter handling,
-workspace-scoped credential access, and crash-recovery tests.
+Apply in order in a transaction per migration. Never point a staging migration
+at the ClipKaro database or live Hostinger database:
 
-This database is an implementation step, not a release gate pass. The current
-Modal `/readyz` endpoint must continue returning 503.
+1. `0001_workspace_jobs.sql`: isolated schema, durable job metadata, RLS
+   enabled with no access policies by default.
+2. `0002_request_scoped_rls.sql`: authorized user-visible reads, restricted API
+   role, and no access to `neon_auth` or migration history.
+3. `0003_workspace_api_and_worker.sql`: workspace-creator membership policy,
+   allowed safe job writes, job result metadata, separate worker privileges.
 
-## Hosted identity preview
+Roles `zyvello_api_staging` and `zyvello_worker_staging` must be **non-owner**
+Neon scoped roles. Migration 0003 removes worker table grants other than `jobs`
+SELECT/UPDATE. Never use the schema owner for API or worker: owner roles can
+bypass RLS. `SET LOCAL` is application context, NOT an identity credential;
+only verified JWT claims may supply its value.
 
-The React/Vite application has a separate hosted login, signup, email-OTP
-verification and session/logout UI, gated by `VITE_ZYVELLO_HOSTED_MODE=true`.
-Its default hosted signup switch is **off**; Neon has public signup disabled
-too. The original local-owner login and provider adapters are preserved.
+Dev migration 0003 was applied first to isolated Neon branch
+`dev-tenant-rls-20261109`, then staging `main` on 2026-11-09, with schema
+versions 1, 2 and 3 confirmed. These are **not** Hostinger's production data.
 
-Build the staging frontend only with environment values from
-`frontend/.env.hosted.example`, replacing the placeholder with the *public*
-Neon Auth Base URL. Never place a Neon database password or service credential
-in a `VITE_` variable. The frontend's `/app` route is currently only a
-safe authenticated holding screen, not a working customer workspace.
+## Modal deployment
 
-The Modal staging API offers `GET /api/v1/me`. It requires a bearer JWT
-signed by Neon Managed Auth's Ed25519 key and validates issuer, audience,
-expiry and verified email through the public JWKS endpoint. It returns user
-identity only; **it grants no membership, access to customer data or jobs**.
-Missing/invalid tokens return 401, and JWKS unavailability returns 503.
+Use the existing **zyvello** CLI profile; ClipKaro has a separate Modal
+profile and must never receive these secrets. Two secrets exist in `main`:
 
-Once the staging build is deployed with optional static preview assets,
-`/login`, `/signup`, `/app` and `/welcome` serve the frontend. HTML is marked
-noindex and never cached. Public registration remains disabled.
+| Secret name | Environment variable | Used by |
+| --- | --- | --- |
+| `zyvello-staging-api-db` | `ZYVELLO_API_DATABASE_URL` | `web` |
+| `zyvello-staging-worker-db` | `ZYVELLO_WORKER_DATABASE_URL` | `process_jobs` |
 
-Remaining requirements: provision a staging test user/invite, exercise sign-in,
-OTP, session, logout, expiry and revocation against real Neon, connect the
-JWT-verified request context to a database-backed API, and then test the entire
-tenant boundary from an authenticated browser. Build separate restricted worker
-permissions and durable jobs only after that. Do not call the staged identity
-API production ready.
+Connection strings reside in Modal Secrets, never in git or browser assets.
+On Windows select process environment `MODAL_PROFILE=zyvello` and set
+`PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8` to avoid console encoding failure.
+Build with `VITE_ZYVELLO_ENABLE_SIGNUP=false` and the **public** Neon Auth
+URL; deploy `modal_zyvello_staging.py` into Modal environment `main`.
+No Hostinger live files or DNS records are modified by this command.
+
+Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
+
+## Verified checks (2026-11-09)
+
+- Local Python hosted auth/API tests: 14 passed.
+- GitHub `hosted-staging-checks`: green, including TypeScript/Vite build,
+  two-tenant disposable PostgreSQL RLS integration and protected API tests.
+- GitHub `tests`: green at deployed branch SHA
+  `af6e075b72c9f31a8db878087809024f642c3551`.
+- Neon schema v3 applied on dev then staging; worker lacks membership SELECT
+  while `jobs` SELECT/UPDATE is granted.
+- Staging endpoints: `/healthz` 200, `/app` 200,
+  `/api/v1/capabilities` 200; unauthenticated `/api/v1/me` and
+  `/api/v1/workspaces` 401.
+- `/readyz` deliberately returns **503** until all release gates pass.
+- Real signed-in account created owner workspace `Zyvello`, queued a
+  `workspace_health` job, and Modal worker completed it on first attempt.
+  PostgreSQL returned `succeeded`, `workspace_queue_healthy`; the app
+  rendered the result after reload. No AI calls, email or payment occurred.
+
+## Security and launch blockers
+
+Do **not** merge this branch into production or point `zyvello.pro` to Modal.
+Before unrestricted users and paying customers can use Zyvello:
+
+1. Migrate legacy SQLite to workspace-scoped contacts, clients, campaigns,
+   mailbox configurations, AI settings, approvals, usage and audit events;
+   define export/deletion and retention.
+2. Add per-user BYO AI key vault with encryption at rest, redaction and
+   rotation. Preserve Groq/Claude/Codex compatibility; do not enable paid
+   calls during QA without deliberate opt-in.
+3. Design India-first compliant sending: validated mailboxes/domains,
+   opt-out/suppression, quotas, abuse prevention, explicit approvals, bounce
+   handling, idempotent sends and logs.
+4. Add durable worker schedules, crash recovery, workspace-specific job
+   permissions, lease-expiry tests and operational monitoring. The current
+   best-effort Modal spawn has **no automatic lost-dispatch recovery**.
+5. Harden auth signup/invites, reset/revocation, MFA/OAuth as required and
+   tenant isolation for each new table and endpoint. Test with two
+   independent real users as well as synthetic database identities.
+6. Run functional, mobile, accessibility, SEO, security, load, backup/restore
+   and failure tests; implement monitoring, alerts, rollback and incident
+   response before launch.
+7. Configure Hostinger production frontend routing, API origin, TLS,
+   trusted domains, CORS and cookie behavior only after staging passes.
+8. Once Faik provides Razorpay keys, separately implement and test server
+   order creation, verified webhook signatures, idempotency, entitlements
+   and reconciliation. **Payment integration is currently absent**.
+
+Staging proves the shared workspace/auth/queue foundation, but is not yet
+a production-grade customer outreach service.
