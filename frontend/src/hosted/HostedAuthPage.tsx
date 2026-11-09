@@ -5,11 +5,21 @@ import { authClient, hostedSignUpEnabled } from "./auth-client";
 
 type Account = { id: string; email: string; name?: string };
 type Page = "login" | "signup" | "app";
-// Neon documents emailOtp.verifyEmail(), but the current exported vanilla
-// client declaration omits that plugin method. Keep the mismatch isolated.
-type EmailOtpVerifier = {
+// Neon documents email OTP methods, but the installed vanilla client type
+// omits some plugin methods. Keep that typing mismatch isolated here.
+type EmailOtpAuth = {
   emailOtp: {
+    sendVerificationOtp(input: { email: string; type: "sign-in" }): Promise<{
+      data?: unknown;
+      error?: { message?: string } | null;
+    }>;
     verifyEmail(input: { email: string; otp: string }): Promise<{
+      data?: unknown;
+      error?: { message?: string } | null;
+    }>;
+  };
+  signIn: {
+    emailOtp(input: { email: string; otp: string }): Promise<{
       data?: unknown;
       error?: { message?: string } | null;
     }>;
@@ -27,6 +37,8 @@ export function HostedAuthPage({ page }: { page: Page }) {
   const [name, setName] = useState("");
   const [otp, setOtp] = useState("");
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [loginWithOtp, setLoginWithOtp] = useState(true);
+  const [awaitingSignInCode, setAwaitingSignInCode] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -62,6 +74,15 @@ export function HostedAuthPage({ page }: { page: Page }) {
     setError("");
     setMessage("");
     try {
+      if (page === "login" && loginWithOtp) {
+        const result = await (authClient as typeof authClient & EmailOtpAuth).emailOtp.sendVerificationOtp({
+          email: email.trim(), type: "sign-in",
+        });
+        if (result.error) throw new Error(result.error.message || "Could not send the login code.");
+        setAwaitingSignInCode(true);
+        setMessage("Check your inbox for a one-time login code. It expires soon.");
+        return;
+      }
       const result = page === "signup"
         ? await authClient.signUp.email({ name: name.trim() || email.split("@")[0], email: email.trim(), password })
         : await authClient.signIn.email({ email: email.trim(), password });
@@ -86,13 +107,37 @@ export function HostedAuthPage({ page }: { page: Page }) {
     }
   }
 
+  async function completeOtpSignIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!authClient || busy) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await (authClient as typeof authClient & EmailOtpAuth).signIn.emailOtp({
+        email: email.trim(), otp: otp.trim(),
+      });
+      if (result.error) throw new Error(result.error.message || "The login code was rejected.");
+      setOtp("");
+      const session = await authClient.getSession();
+      if (session.error || !session.data?.session || !session.data?.user) {
+        throw new Error("Login was accepted, but the session could not be confirmed. Please retry.");
+      }
+      window.location.assign("/app");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to verify your login code.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function verifyEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!authClient || busy) return;
     setBusy(true);
     setError("");
     try {
-      const result = await (authClient as typeof authClient & EmailOtpVerifier).emailOtp.verifyEmail({
+      const result = await (authClient as typeof authClient & EmailOtpAuth).emailOtp.verifyEmail({
         email: email.trim(), otp: otp.trim(),
       });
       if (result.error) throw new Error(result.error.message || "The code could not be verified.");
@@ -153,6 +198,15 @@ export function HostedAuthPage({ page }: { page: Page }) {
               <h1 className="text-3xl font-semibold">Private beta access</h1>
               <p className="mt-4 text-sm leading-6 text-gray-300">New accounts are currently invitation-only while we test workspace security. Public registration is not yet open.</p>
               <a href="/login" className="button-light mt-6 w-full">Already invited? Log in</a>
+            </> : awaitingSignInCode && page === "login" ? <>
+              <h1 className="text-3xl font-semibold">Enter your login code</h1>
+              <p className="mt-4 text-sm text-gray-300">Enter the one-time code sent to {email}. Never share it with anyone.</p>
+              <form onSubmit={event => void completeOtpSignIn(event)} className="mt-6 space-y-4">
+                <label className="block text-sm text-gray-200" htmlFor="hosted-login-otp">Email login code</label>
+                <input id="hosted-login-otp" className="glass-input w-full bg-transparent" type="text" inputMode="numeric" autoComplete="one-time-code" required maxLength={12} value={otp} onChange={event => setOtp(event.target.value)} />
+                <button className="button-light w-full" type="submit" disabled={busy}>{busy ? "Checking code…" : "Verify and sign in"}</button>
+              </form>
+              <button type="button" className="mt-5 text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setAwaitingSignInCode(false); setOtp(""); setMessage(""); setError(""); }}>Use another email</button>
             </> : awaitingVerification ? <>
               <h1 className="text-3xl font-semibold">Verify your email</h1>
               <p className="mt-4 text-sm text-gray-300">Check {email} for your one-time code.</p>
@@ -163,13 +217,14 @@ export function HostedAuthPage({ page }: { page: Page }) {
               </form>
             </> : <>
               <h1 className="text-3xl font-semibold">{isSignUp ? "Create your account." : "Welcome back."}</h1>
-              <p className="mt-3 text-sm text-gray-400">{isSignUp ? "Verify your email before accessing Zyvello." : "Sign in securely to your Zyvello account."}</p>
+              <p className="mt-3 text-sm text-gray-400">{isSignUp ? "Verify your email before accessing Zyvello." : loginWithOtp ? "Private beta members can sign in with a one-time email code." : "Sign in securely with your existing password."}</p>
               <form onSubmit={event => void submit(event)} className="mt-8 space-y-5">
                 {isSignUp && <div><label htmlFor="hosted-name" className="mb-2 block text-sm text-gray-300">Name</label><input id="hosted-name" className="glass-input w-full bg-transparent" value={name} onChange={event => setName(event.target.value)} maxLength={100} autoComplete="name" required /></div>}
                 <div><label htmlFor="hosted-email" className="mb-2 block text-sm text-gray-300">Email address</label><div className="glass-input"><Mail className="h-4 w-4 shrink-0 text-gray-400" /><input id="hosted-email" className="min-w-0 flex-1 bg-transparent py-1 outline-none" type="email" autoComplete="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} /></div></div>
-                <div><label htmlFor="hosted-password" className="mb-2 block text-sm text-gray-300">Password</label><div className="glass-input"><LockKeyhole className="h-4 w-4 shrink-0 text-gray-400" /><input id="hosted-password" className="min-w-0 flex-1 bg-transparent py-1 outline-none" type="password" autoComplete={isSignUp ? "new-password" : "current-password"} required minLength={8} maxLength={256} value={password} onChange={event => setPassword(event.target.value)} /></div></div>
-                <button className="button-light flex w-full items-center justify-center gap-2" type="submit" disabled={busy}>{busy ? "Please wait…" : isSignUp ? "Create account" : "Log in"}<ArrowRight className="h-4 w-4" /></button>
+                {(isSignUp || !loginWithOtp) && <div><label htmlFor="hosted-password" className="mb-2 block text-sm text-gray-300">Password</label><div className="glass-input"><LockKeyhole className="h-4 w-4 shrink-0 text-gray-400" /><input id="hosted-password" className="min-w-0 flex-1 bg-transparent py-1 outline-none" type="password" autoComplete={isSignUp ? "new-password" : "current-password"} required minLength={8} maxLength={256} value={password} onChange={event => setPassword(event.target.value)} /></div></div>}
+                <button className="button-light flex w-full items-center justify-center gap-2" type="submit" disabled={busy}>{busy ? "Please wait…" : isSignUp ? "Create account" : loginWithOtp ? "Email me a login code" : "Log in"}<ArrowRight className="h-4 w-4" /></button>
               </form>
+              {!isSignUp && <button type="button" className="mt-5 w-full text-center text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setLoginWithOtp(value => !value); setError(""); setMessage(""); }}>{loginWithOtp ? "Use an existing password instead" : "Use a one-time email code instead"}</button>}
               <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "Need access?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? "/login" : "/signup"}>{isSignUp ? "Log in" : "Private beta details"}</a></p>
             </>}
           {message && <p role="status" className="mt-5 text-sm text-emerald-300">{message}</p>}
