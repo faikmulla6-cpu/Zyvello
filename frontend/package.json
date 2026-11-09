@@ -9,6 +9,7 @@
     "build:app": "tsc --noEmit && vite build"
   },
   "dependencies": {
+    "@neon/neon-js": "^0.10.2",
     "@radix-ui/react-slot": "^1.5.0",
     "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",
