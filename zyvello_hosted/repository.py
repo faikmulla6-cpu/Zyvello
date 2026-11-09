@@ -16,6 +16,9 @@ from uuid import UUID, uuid4
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,62}$")
 MAX_WORKSPACES_PER_USER = 3
 MAX_PENDING_JOBS_PER_WORKSPACE = 5
+MAX_CONTACTS_PER_WORKSPACE = 1000
+MAX_CAMPAIGNS_PER_WORKSPACE = 50
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 class StoreUnavailable(Exception):
@@ -27,6 +30,10 @@ class StoreConflict(Exception):
 
 
 class StoreNotFound(Exception):
+    pass
+
+
+class StoreForbidden(Exception):
     pass
 
 
@@ -60,6 +67,8 @@ class HostedStore:
                         yield cursor
         except psycopg.OperationalError as error:
             raise StoreUnavailable("Database connection failed") from error
+        except psycopg.errors.InsufficientPrivilege as error:
+            raise StoreForbidden("You cannot modify this workspace") from error
 
     def ping(self) -> None:
         import psycopg
@@ -131,6 +140,112 @@ class HostedStore:
             if not row:
                 raise StoreNotFound("Workspace not found")
             return row
+
+    @staticmethod
+    def _require_workspace(cursor: Any, workspace_id: UUID) -> None:
+        # The workspaces RLS policy returns nothing for a nonmember.
+        cursor.execute("SELECT 1 FROM zyvello.workspaces WHERE id=%s", (workspace_id,))
+        if not cursor.fetchone():
+            raise StoreNotFound("Workspace not found")
+
+    def list_contacts(self, auth_user_id: str, workspace_id: UUID) -> list[dict[str, Any]]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("""
+                SELECT id, full_name, email, company, created_at
+                FROM zyvello.contacts WHERE workspace_id=%s
+                ORDER BY created_at DESC, id DESC LIMIT 100
+            """, (workspace_id,))
+            return cursor.fetchall()
+
+    def create_contact(self, auth_user_id: str, workspace_id: UUID, *, full_name: str,
+                       email: str, company: str = "") -> dict[str, Any]:
+        from psycopg.errors import UniqueViolation
+        full_name, company, email = full_name.strip(), company.strip(), email.strip().lower()
+        if not 1 <= len(full_name) <= 160 or len(company) > 160:
+            raise ValueError("Invalid contact name or company")
+        if not 3 <= len(email) <= 254 or not EMAIL_RE.fullmatch(email):
+            raise ValueError("Invalid contact email")
+        try:
+            with self.transaction(auth_user_id) as cursor:
+                self._require_workspace(cursor, workspace_id)
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 2))", (str(workspace_id),))
+                cursor.execute("SELECT count(*) AS n FROM zyvello.contacts WHERE workspace_id=%s", (workspace_id,))
+                if cursor.fetchone()["n"] >= MAX_CONTACTS_PER_WORKSPACE:
+                    raise StoreLimit("Contact limit reached for private beta")
+                cursor.execute("""
+                    INSERT INTO zyvello.contacts
+                        (workspace_id, full_name, email, company, created_by_auth_user_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id, full_name, email, company, created_at
+                """, (workspace_id, full_name, email, company, auth_user_id))
+                return cursor.fetchone()
+        except UniqueViolation as error:
+            raise StoreConflict("This email already exists in the workspace") from error
+
+    def list_campaigns(self, auth_user_id: str, workspace_id: UUID) -> list[dict[str, Any]]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("""
+                SELECT id, name, goal, status, created_at
+                FROM zyvello.campaigns WHERE workspace_id=%s
+                ORDER BY created_at DESC, id DESC LIMIT 100
+            """, (workspace_id,))
+            return cursor.fetchall()
+
+    def create_campaign(self, auth_user_id: str, workspace_id: UUID, *, name: str,
+                        goal: str = "") -> dict[str, Any]:
+        name, goal = name.strip(), goal.strip()
+        if not 1 <= len(name) <= 160 or len(goal) > 1000:
+            raise ValueError("Invalid campaign name or goal")
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))", (str(workspace_id),))
+            cursor.execute("SELECT count(*) AS n FROM zyvello.campaigns WHERE workspace_id=%s", (workspace_id,))
+            if cursor.fetchone()["n"] >= MAX_CAMPAIGNS_PER_WORKSPACE:
+                raise StoreLimit("Draft campaign limit reached for private beta")
+            cursor.execute("""
+                INSERT INTO zyvello.campaigns
+                    (workspace_id, name, goal, created_by_auth_user_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, name, goal, status, created_at
+            """, (workspace_id, name, goal, auth_user_id))
+            return cursor.fetchone()
+
+    @staticmethod
+    def _require_campaign(cursor: Any, workspace_id: UUID, campaign_id: UUID) -> None:
+        cursor.execute("SELECT 1 FROM zyvello.campaigns WHERE workspace_id=%s AND id=%s",
+                       (workspace_id, campaign_id))
+        if not cursor.fetchone():
+            raise StoreNotFound("Campaign not found")
+
+    def list_campaign_contacts(self, auth_user_id: str, workspace_id: UUID,
+                               campaign_id: UUID) -> list[dict[str, Any]]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_campaign(cursor, workspace_id, campaign_id)
+            cursor.execute("""
+                SELECT c.id, c.full_name, c.email, c.company, cc.added_at
+                FROM zyvello.campaign_contacts cc
+                JOIN zyvello.contacts c ON c.workspace_id=cc.workspace_id
+                    AND c.id=cc.contact_id
+                WHERE cc.workspace_id=%s AND cc.campaign_id=%s
+                ORDER BY cc.added_at DESC LIMIT 100
+            """, (workspace_id, campaign_id))
+            return cursor.fetchall()
+
+    def add_campaign_contact(self, auth_user_id: str, workspace_id: UUID,
+                             campaign_id: UUID, contact_id: UUID) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_campaign(cursor, workspace_id, campaign_id)
+            cursor.execute("SELECT 1 FROM zyvello.contacts WHERE workspace_id=%s AND id=%s",
+                           (workspace_id, contact_id))
+            if not cursor.fetchone():
+                raise StoreNotFound("Contact not found")
+            cursor.execute("""
+                INSERT INTO zyvello.campaign_contacts(workspace_id, campaign_id, contact_id)
+                VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING contact_id
+            """, (workspace_id, campaign_id, contact_id))
+            return {"created": bool(cursor.fetchone()), "contact_id": contact_id}
 
     def list_jobs(self, auth_user_id: str, workspace_id: UUID, *, limit: int = 25) -> list[dict[str, Any]]:
         with self.transaction(auth_user_id) as cursor:

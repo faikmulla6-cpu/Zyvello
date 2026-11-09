@@ -40,6 +40,7 @@ class RequestScopedRlsTests(unittest.TestCase):
             cursor.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA zyvello TO zyvello_api_staging")
         execute_sql_file(cls.owner, "0002_request_scoped_rls.sql")
         execute_sql_file(cls.owner, "0003_workspace_api_and_worker.sql")
+        execute_sql_file(cls.owner, "0004_contact_campaign_drafts.sql")
         with cls.owner.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO zyvello.workspaces (id, slug, name, created_by_auth_user_id)
@@ -175,6 +176,60 @@ class RequestScopedRlsTests(unittest.TestCase):
             with self.assertRaises(InsufficientPrivilege):
                 with conn.transaction():
                     conn.execute("INSERT INTO zyvello.jobs(workspace_id,kind,idempotency_key) VALUES ('00000000-0000-4000-8000-0000000000b2','workspace_health','forbidden')")
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT * FROM zyvello.contacts")
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT * FROM zyvello.campaigns")
+
+    def test_contact_and_campaign_data_stays_in_own_tenant(self):
+        from psycopg.errors import InsufficientPrivilege, UniqueViolation
+        with psycopg.connect(API_URL) as conn:
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                contact_id = conn.execute("""
+                    INSERT INTO zyvello.contacts(workspace_id,full_name,email,created_by_auth_user_id)
+                    VALUES ('00000000-0000-4000-8000-0000000000a1','Test','qa@example.test','test-auth-a')
+                    RETURNING id
+                """).fetchone()[0]
+                campaign_id = conn.execute("""
+                    INSERT INTO zyvello.campaigns(workspace_id,name,created_by_auth_user_id)
+                    VALUES ('00000000-0000-4000-8000-0000000000a1','Draft QA','test-auth-a')
+                    RETURNING id
+                """).fetchone()[0]
+                conn.execute("""
+                    INSERT INTO zyvello.campaign_contacts(workspace_id,campaign_id,contact_id)
+                    VALUES ('00000000-0000-4000-8000-0000000000a1',%s,%s)
+                """, (campaign_id, contact_id))
+                self.assertEqual(conn.execute("SELECT status FROM zyvello.campaigns WHERE id=%s", (campaign_id,)).fetchone()[0], "draft")
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.campaign_contacts").fetchone()[0], 1)
+            with self.assertRaises(UniqueViolation):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-a",))
+                    conn.execute("""
+                        INSERT INTO zyvello.contacts(workspace_id,full_name,email,created_by_auth_user_id)
+                        VALUES ('00000000-0000-4000-8000-0000000000a1','Duplicate','qa@example.test','test-auth-a')
+                    """)
+            with self.assertRaises(InsufficientPrivilege):
+                with conn.transaction():
+                    conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-b",))
+                    conn.execute("""
+                        INSERT INTO zyvello.contacts(workspace_id,full_name,email,created_by_auth_user_id)
+                        VALUES ('00000000-0000-4000-8000-0000000000a1','Intruder','wrong@example.test','test-auth-b')
+                    """)
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', %s, true)", ("test-auth-b",))
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.contacts").fetchone()[0], 0)
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.campaigns").fetchone()[0], 0)
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.campaign_contacts").fetchone()[0], 0)
+
+    def test_api_cannot_edit_or_delete_drafts_yet(self):
+        with psycopg.connect(API_URL) as conn:
+            with conn.transaction():
+                for table in ("contacts", "campaigns", "campaign_contacts"):
+                    self.assertFalse(conn.execute("SELECT has_table_privilege(current_user, %s, 'UPDATE')", ("zyvello." + table,)).fetchone()[0])
+                    self.assertFalse(conn.execute("SELECT has_table_privilege(current_user, %s, 'DELETE')", ("zyvello." + table,)).fetchone()[0])
 
 
 if __name__ == "__main__":

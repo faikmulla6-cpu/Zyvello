@@ -14,10 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
-from .repository import HostedStore, StoreConflict, StoreLimit, StoreNotFound, StoreUnavailable, serialize_row
+from .repository import HostedStore, StoreConflict, StoreForbidden, StoreLimit, StoreNotFound, StoreUnavailable, serialize_row
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -27,6 +27,24 @@ class CreateWorkspaceRequest(BaseModel):
 
 class EnqueueJobRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class CreateContactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    full_name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    company: str = Field(default="", max_length=160)
+
+
+class CreateCampaignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=160)
+    goal: str = Field(default="", max_length=1000)
+
+
+class AddCampaignContactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contact_id: UUID
 
 
 def create_app(
@@ -76,6 +94,8 @@ def create_app(
             raise HTTPException(404, str(error)) from None
         except StoreConflict as error:
             raise HTTPException(409, str(error)) from None
+        except StoreForbidden as error:
+            raise HTTPException(403, str(error)) from None
         except StoreLimit as error:
             raise HTTPException(429, str(error), headers={"Retry-After": "30"}) from None
         except StoreUnavailable:
@@ -120,6 +140,42 @@ def create_app(
         rows = await store_call(db.list_jobs, identity.user_id, workspace_id)
         return {"jobs": [serialize_row(row) for row in rows]}
 
+    @app.get("/api/v1/workspaces/{workspace_id}/contacts")
+    async def list_contacts(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_contacts, identity.user_id, workspace_id)
+        return {"contacts": [serialize_row(row) for row in rows]}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/contacts", status_code=201)
+    async def create_contact(workspace_id: UUID, body: CreateContactRequest, identity=Depends(verified_identity),
+                             db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.create_contact, identity.user_id, workspace_id,
+                               full_name=body.full_name, email=body.email, company=body.company)
+        return {"contact": serialize_row(row)}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/campaigns")
+    async def list_campaigns(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_campaigns, identity.user_id, workspace_id)
+        return {"campaigns": [serialize_row(row) for row in rows]}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/campaigns", status_code=201)
+    async def create_campaign(workspace_id: UUID, body: CreateCampaignRequest, identity=Depends(verified_identity),
+                              db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.create_campaign, identity.user_id, workspace_id,
+                               name=body.name, goal=body.goal)
+        return {"campaign": serialize_row(row)}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts")
+    async def list_campaign_contacts(workspace_id: UUID, campaign_id: UUID,
+                                     identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_campaign_contacts, identity.user_id, workspace_id, campaign_id)
+        return {"contacts": [serialize_row(row) for row in rows]}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts", status_code=201)
+    async def add_campaign_contact(workspace_id: UUID, campaign_id: UUID, body: AddCampaignContactRequest,
+                                   identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.add_campaign_contact, identity.user_id, workspace_id, campaign_id, body.contact_id)
+        return serialize_row(row)
+
     @app.post("/api/v1/workspaces/{workspace_id}/jobs", status_code=202)
     async def enqueue_job(workspace_id: UUID, body: EnqueueJobRequest, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.enqueue_health_job, identity.user_id, workspace_id, idempotency_key=body.idempotency_key)
@@ -140,6 +196,8 @@ def create_app(
         return {
             "stage": "private_beta",
             "workspace_api": bool(store),
+            "contacts_enabled": bool(store),
+            "campaign_drafts_enabled": bool(store),
             "job_kinds": ["workspace_health"],
             "ai_enabled": False,
             "outbound_sending_enabled": False,
