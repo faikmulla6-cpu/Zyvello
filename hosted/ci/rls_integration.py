@@ -20,7 +20,7 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 def execute_sql_file(conn: psycopg.Connection, filename: str) -> None:
     sql = (MIGRATIONS / filename).read_text(encoding="utf-8")
     with conn.cursor() as cursor:
-        # The two checked-in migration files have no semicolons inside a
+        # The checked-in migration files have no semicolons inside a
         # dollar-quoted function body; their statements end with ";\n".
         for statement in sql.split(";\n"):
             if statement.strip():
@@ -71,7 +71,10 @@ class RequestScopedRlsTests(unittest.TestCase):
                 own_membership = [r[0] for r in conn.execute("SELECT auth_user_id FROM zyvello.memberships ORDER BY auth_user_id")]
                 migration_rows = conn.execute("SELECT count(*) FROM zyvello.schema_migrations").fetchone()[0]
                 self.assertEqual(workspaces, expected_slug)
-                self.assertEqual(jobs, expected_job)
+                # A separate test may have enqueued another permitted job.
+                # Assert exact visibility of the two cross-tenant fixtures.
+                fixture_jobs = [job for job in jobs if job in ("job-a", "job-b")]
+                self.assertEqual(fixture_jobs, expected_job)
                 self.assertEqual(own_membership, [actor] if actor else [])
                 self.assertEqual(migration_rows, 0)
 

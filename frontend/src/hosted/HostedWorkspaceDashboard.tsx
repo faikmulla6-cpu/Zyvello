@@ -16,15 +16,15 @@ type Job = {
 
 async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   if (!authClient) throw new Error("Authentication is unavailable");
-  const tokenResult = await authClient.token();
-  if (tokenResult.error || !tokenResult.data?.token) {
+  const token = await authClient.getJWTToken();
+  if (!token) {
     throw new Error("Your session could not be verified. Please sign in again.");
   }
   const response = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${tokenResult.data.token}`,
+      Authorization: `Bearer ${token}`,
       ...init?.headers,
     },
     cache: "no-store",
