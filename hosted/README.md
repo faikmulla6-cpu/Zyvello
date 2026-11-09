@@ -10,8 +10,9 @@ and all payment logic are explicitly deferred until the owner supplies keys.
 ## Current staging architecture
 
 - **UI**: React/Vite app with `VITE_ZYVELLO_HOSTED_MODE=true`, public Neon Auth
-  base URL, and public signup disabled. Hosted `/app` shows a private workspace
-  and safe job history. This is NOT the full Harvey product dashboard.
+  base URL, and public signup disabled. Hosted `/app` shows a private workspace,
+  contacts, campaign drafts and safe job history. This is NOT the full Harvey
+  product dashboard.
 - **Auth**: Neon Managed Better Auth (`neon_auth` schema), email verification,
   signed JWT session, and server-side JWKS signature/issuer/audience/expiry
   verification before every protected API request.
@@ -19,7 +20,9 @@ and all payment logic are explicitly deferred until the owner supplies keys.
   only the restricted `zyvello_api_staging` database credential. The browser
   never receives a database URL, signing key or AI key.
 - **Data**: Neon PostgreSQL staging `zyvello` schema, `workspaces`,
-  `memberships`, `jobs`, and migrations. Database RLS restricts every API
+  `memberships`, `jobs`, `contacts`, `campaigns`, `campaign_contacts`, and
+  migrations. Contacts are private and campaigns can only be drafts.
+  Database RLS restricts every API
   transaction to the verified JWT subject through transaction-local
   `zyvello.auth_user_id`; parameterized SQL is mandatory.
 - **Worker**: Modal `process_jobs` function, using a DIFFERENT restricted
@@ -43,6 +46,10 @@ at the ClipKaro database or live Hostinger database:
    role, and no access to `neon_auth` or migration history.
 3. `0003_workspace_api_and_worker.sql`: workspace-creator membership policy,
    allowed safe job writes, job result metadata, separate worker privileges.
+4. `0004_contact_campaign_drafts.sql`: workspace-private contact directory,
+   inert campaign drafts, and draft/contact assignments. Read access follows
+   membership and insert access requires owner/admin membership. The API has
+   SELECT/INSERT, not UPDATE/DELETE, for these tables; the worker has none.
 
 Roles `zyvello_api_staging` and `zyvello_worker_staging` must be **non-owner**
 Neon scoped roles. Migration 0003 removes worker table grants other than `jobs`
@@ -50,9 +57,11 @@ SELECT/UPDATE. Never use the schema owner for API or worker: owner roles can
 bypass RLS. `SET LOCAL` is application context, NOT an identity credential;
 only verified JWT claims may supply its value.
 
-Dev migration 0003 was applied first to isolated Neon branch
+Migrations through 0004 were applied first to isolated Neon branch
 `dev-tenant-rls-20261109`, then staging `main` on 2026-11-09, with schema
-versions 1, 2 and 3 confirmed. These are **not** Hostinger's production data.
+versions 1, 2, 3 and 4 confirmed. Synthetic accounts on the isolated branch
+verified that a second workspace could not see or insert the first workspace's
+records. These are **not** Hostinger's production data.
 
 ## Modal deployment
 
@@ -75,13 +84,22 @@ Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
 
 ## Verified checks (2026-11-09)
 
-- Local Python hosted auth/API tests: 14 passed.
-- GitHub `hosted-staging-checks`: green, including TypeScript/Vite build,
-  two-tenant disposable PostgreSQL RLS integration and protected API tests.
-- GitHub `tests`: green at deployed branch SHA
+- Local Python hosted auth/API tests: **16 passed** at branch commit
+  `50074da5421604e4d2e6f13a356a2a5408baec23`.
+- Windows TypeScript/Vite production build of the same commit passed.
+- Earlier GitHub `hosted-staging-checks` and `tests` workflows were green at
   `af6e075b72c9f31a8db878087809024f642c3551`.
-- Neon schema v3 applied on dev then staging; worker lacks membership SELECT
-  while `jobs` SELECT/UPDATE is granted.
+- **Current commit's GitHub CI is unverified**: both workflows reported failure,
+  but all jobs have `steps: null` and no logs, indicating they did not run any
+  steps. Do not mistake this for a passing test run.
+- Neon schema v4 applied on dev then staging; new tables have RLS, the API
+  lacks UPDATE/DELETE, and the worker lacks access to contacts/campaigns.
+- A real signed-in owner saved a synthetic contact, created a draft campaign,
+  attached that contact and reloaded the page. Each persisted in PostgreSQL.
+  Staging aggregate counts: 1 test contact, 1 draft, 1 assignment.
+- After deployment the Modal worker processed a second `workspace_health`
+  diagnostic successfully on its first attempt (no AI, sends or payments).
+- An unauthenticated GET to the contact endpoint returned HTTP 401.
 - Staging endpoints: `/healthz` 200, `/app` 200,
   `/api/v1/capabilities` 200; unauthenticated `/api/v1/me` and
   `/api/v1/workspaces` 401.
@@ -96,9 +114,10 @@ Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
 Do **not** merge this branch into production or point `zyvello.pro` to Modal.
 Before unrestricted users and paying customers can use Zyvello:
 
-1. Migrate legacy SQLite to workspace-scoped contacts, clients, campaigns,
-   mailbox configurations, AI settings, approvals, usage and audit events;
-   define export/deletion and retention.
+1. Continue replacing the legacy SQLite business model: contacts and inert
+   campaign drafts exist, but clients, outreach sequences, mailbox
+   configurations, AI settings, approvals, usage and audit events are pending.
+   Define contact editing/export/deletion and retention.
 2. Add per-user BYO AI key vault with encryption at rest, redaction and
    rotation. Preserve Groq/Claude/Codex compatibility; do not enable paid
    calls during QA without deliberate opt-in.
