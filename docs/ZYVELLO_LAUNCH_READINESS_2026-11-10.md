@@ -2,6 +2,31 @@
 
 Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOMERS**.
 
+## Subsequent security and renewal work — awaiting staging release
+
+- Hardened the Razorpay webhook request path with bounded streaming before
+  signature verification, rather than unbounded buffering of a forged payload.
+- Added `no-store` API caching and response security headers (no sniffing,
+  framing, camera/microphone/geolocation permissions, or referrer leakage).
+- Added a tested billing event reconciliation function: captured second-period
+  renewals can extend access, unsuccessful renewals cannot extend it, older
+  events cannot roll periods backward, and `cancelled`/`completed`/`expired`
+  states cannot be reactivated by a later charged webhook.
+- **32 isolated hosted tests passed locally**, including six new billing
+  lifecycle cases and API security-header checks. These are deterministic
+  simulations, **not** a second live Test Mode renewal capture.
+- Added a hosted account password-recovery UI using Neon's documented
+  `forgetPassword.emailOtp` and `emailOtp.resetPassword` client methods. The
+  TypeScript and Vite production build passed; an actual email receipt and
+  password reset are still to be tested in staging.
+- The user has now authorized automatic-renewal testing in Razorpay **Test
+  Mode**. An actual second scheduled monthly charge, provider retry schedule,
+  refund/chargeback handling, and deployed-database replay remain unverified.
+- The **complete legacy-plus-hosted pytest suite** passed in an isolated
+  desktop Python environment: **1,533 passed, 184 skipped, 0 failed** (5m38s).
+  Skipped cases are not counted as passing; this was a local suite, not the
+  GitHub-hosted CI pipeline or production environment.
+
 ## Verified on the staging path
 
 - Neon Managed Auth session opened an owner workspace in the deployed hosted UI.
@@ -16,13 +41,20 @@ Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOME
 
 ## Explicitly not yet verified or not ready
 
-- **Automatic monthly renewal testing intentionally skipped at the owner's request.** This does not disable actual recurring billing.
+- Automatic monthly renewal **was previously skipped**, but the owner has
+  explicitly authorized Test Mode renewal tests now. A synthetic event replay
+  must not be described as a genuine second Razorpay renewal charge.
 - Renewal charge failures, refunds, disputes/chargebacks, delayed/out-of-order delivery against the deployed ledger, and end-of-cycle cancellation need an agreed operational policy before taking live money.
 - Complete Neon Auth recovery, session revocation, multiple invited users, and two independently authenticated customer sessions must be exercised end-to-end in the browser. Earlier synthetic two-tenant RLS tests passed, but they are not a substitute for these flows.
 - Customer-facing outreach, mailbox connections, permission/consent handling, AI key storage/calls, sending controls, and provider rate-limit recovery are **disabled in hosted staging**; the existing local Groq, Claude, and Codex integrations are preserved, not ported into the multi-tenant runtime.
 - Background processing currently runs only a safe workspace-health diagnostic. Sending jobs, queue starvation/restarts at customer load, and retry/reconciliation alerts are not production-proven.
 - Actual backup restore, automated alerts, ongoing cost/compute monitoring, retention/erasure workflows, privacy/refund/terms disclosures, tax/compliance review, and rollback rehearsal have not been evidenced.
-- The general legacy test suite was not runnable in the Windows checkout because `pytest` is missing from the selected Python interpreter. This is an environment gap, not a confirmed application failure.
+- Earlier attempts to run the full suite in the everyday Python environment
+  failed during collection because `pytz` and `aiosmtplib` were absent and the
+  default pytest temp folder was inaccessible. Both environment issues were
+  avoided in a throwaway virtual environment and explicit temp directory; the
+  full suite passed there. GitHub Actions remains blocked by account billing,
+  so a green hosted CI check is not available.
 - `/readyz` deliberately returns 503 while outbound and recovery controls remain disabled. Do not use staging liveness as proof of production readiness.
 
 ## Production promotion gates

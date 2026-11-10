@@ -18,6 +18,16 @@ type EmailOtpAuth = {
       data?: unknown;
       error?: { message?: string } | null;
     }>;
+    resetPassword(input: { email: string; otp: string; password: string }): Promise<{
+      data?: unknown;
+      error?: { message?: string } | null;
+    }>;
+  };
+  forgetPassword: {
+    emailOtp(input: { email: string }): Promise<{
+      data?: unknown;
+      error?: { message?: string } | null;
+    }>;
   };
   signIn: {
     emailOtp(input: { email: string; otp: string }): Promise<{
@@ -40,6 +50,9 @@ export function HostedAuthPage({ page }: { page: Page }) {
   const [awaitingVerification, setAwaitingVerification] = useState(false);
   const [loginWithOtp, setLoginWithOtp] = useState(true);
   const [awaitingSignInCode, setAwaitingSignInCode] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryOtpSent, setRecoveryOtpSent] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -168,6 +181,51 @@ export function HostedAuthPage({ page }: { page: Page }) {
     }
   }
 
+  async function requestPasswordRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!authClient || busy) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await (authClient as typeof authClient & EmailOtpAuth).forgetPassword.emailOtp({
+        email: email.trim(),
+      });
+      if (result.error) throw new Error("Unable to send a recovery code. Try again in a moment.");
+      setRecoveryOtpSent(true);
+      setMessage("If this account exists, check its email for a password recovery code.");
+    } catch {
+      setError("Recovery email is temporarily unavailable or rate-limited. Please try later.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completePasswordRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!authClient || busy || newPassword.length < 8) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await (authClient as typeof authClient & EmailOtpAuth).emailOtp.resetPassword({
+        email: email.trim(), otp: otp.trim(), password: newPassword,
+      });
+      if (result.error) throw new Error("Invalid or expired recovery code. Request a new code and retry.");
+      setOtp("");
+      setPassword("");
+      setNewPassword("");
+      setRecovering(false);
+      setRecoveryOtpSent(false);
+      setLoginWithOtp(false);
+      setMessage("Password updated. Sign in with your new password.");
+    } catch {
+      setError("The recovery code could not be used. It may have expired or been tried too often.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const isSignUp = page === "signup";
   return (
     <div className="auth-page relative isolate flex min-h-dvh flex-col overflow-hidden bg-black text-white">
@@ -194,6 +252,22 @@ export function HostedAuthPage({ page }: { page: Page }) {
               <h1 className="text-3xl font-semibold">Private beta access</h1>
               <p className="mt-4 text-sm leading-6 text-gray-300">New accounts are currently invitation-only while we test workspace security. Public registration is not yet open.</p>
               <a href="/login" className="button-light mt-6 w-full">Already invited? Log in</a>
+            </> : recovering && page === "login" ? <>
+              <h1 className="text-3xl font-semibold">Recover your account.</h1>
+              <p className="mt-3 text-sm text-gray-300">We will send a one-time code to your verified account email. Never share it.</p>
+              {!recoveryOtpSent ? <form onSubmit={event => void requestPasswordRecovery(event)} className="mt-6 space-y-4">
+                <label className="block text-sm text-gray-200" htmlFor="hosted-recovery-email">Account email</label>
+                <input id="hosted-recovery-email" type="email" autoComplete="email" required maxLength={254} className="glass-input w-full bg-transparent" value={email} onChange={event => setEmail(event.target.value)} />
+                <button className="button-light w-full" type="submit" disabled={busy}>{busy ? "Sending…" : "Email a recovery code"}</button>
+              </form> : <form onSubmit={event => void completePasswordRecovery(event)} className="mt-6 space-y-4">
+                <p className="text-xs text-gray-300">Code sent for {email}.</p>
+                <label className="block text-sm text-gray-200" htmlFor="hosted-recovery-code">Recovery code</label>
+                <input id="hosted-recovery-code" type="text" inputMode="numeric" autoComplete="one-time-code" required maxLength={12} className="glass-input w-full bg-transparent" value={otp} onChange={event => setOtp(event.target.value)} />
+                <label className="block text-sm text-gray-200" htmlFor="hosted-recovery-new-password">New password</label>
+                <input id="hosted-recovery-new-password" type="password" autoComplete="new-password" required minLength={8} maxLength={256} className="glass-input w-full bg-transparent" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
+                <button className="button-light w-full" type="submit" disabled={busy}>{busy ? "Updating…" : "Reset password"}</button>
+              </form>}
+              <button type="button" className="mt-5 text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setRecovering(false); setRecoveryOtpSent(false); setOtp(""); setNewPassword(""); setError(""); setMessage(""); }}>Back to login</button>
             </> : awaitingSignInCode && page === "login" ? <>
               <h1 className="text-3xl font-semibold">Enter your login code</h1>
               <p className="mt-4 text-sm text-gray-300">Enter the one-time code sent to {email}. Never share it with anyone.</p>
@@ -221,6 +295,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
                 <button className="button-light flex w-full items-center justify-center gap-2" type="submit" disabled={busy}>{busy ? "Please wait…" : isSignUp ? "Create account" : loginWithOtp ? "Email me a login code" : "Log in"}<ArrowRight className="h-4 w-4" /></button>
               </form>
               {!isSignUp && <button type="button" className="mt-5 w-full text-center text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setLoginWithOtp(value => !value); setError(""); setMessage(""); }}>{loginWithOtp ? "Use an existing password instead" : "Use a one-time email code instead"}</button>}
+              {!isSignUp && <button type="button" className="mt-3 w-full text-center text-sm text-gray-300 underline underline-offset-4" disabled={busy} onClick={() => { setRecovering(true); setRecoveryOtpSent(false); setOtp(""); setNewPassword(""); setError(""); setMessage(""); }}>Forgot your password? Reset it with email</button>}
               <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "Need access?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? "/login" : "/signup"}>{isSignUp ? "Log in" : "Private beta details"}</a></p>
             </>}
           {message && <p role="status" className="mt-5 text-sm text-emerald-300">{message}</p>}

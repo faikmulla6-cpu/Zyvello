@@ -95,6 +95,17 @@ def create_app(
         allow_credentials=False,
     )
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     async def verified_identity(authorization: str | None = Header(default=None)):
         if verifier is None:
             raise HTTPException(503, "Identity verification is not configured")
@@ -290,9 +301,16 @@ def create_app(
             raise HTTPException(503, "Billing webhook not configured")
         if request.headers.get("content-length", "").isdigit() and int(request.headers["content-length"]) > MAX_WEBHOOK_BODY_BYTES:
             raise HTTPException(413, "Webhook payload too large")
-        raw = await request.body()
-        if len(raw) > MAX_WEBHOOK_BODY_BYTES:
-            raise HTTPException(413, "Webhook payload too large")
+        # Do not let a misleading/missing Content-Length force Starlette to
+        # buffer an arbitrarily large unauthenticated body before validation.
+        chunks: list[bytes] = []
+        received = 0
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > MAX_WEBHOOK_BODY_BYTES:
+                raise HTTPException(413, "Webhook payload too large")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
         try:
             verify_webhook_signature(raw_body=raw, signature=x_razorpay_signature or "",
                                      webhook_secret=billing_settings.webhook_secret)

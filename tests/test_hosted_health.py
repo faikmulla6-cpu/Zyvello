@@ -40,6 +40,16 @@ class HostedHealthTests(unittest.TestCase):
             self.assertEqual(client.get("/static/favicon.svg").status_code, 200)
             self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
+    def test_auth_and_api_responses_have_private_cache_and_browser_defenses(self):
+        for path in ("/api/v1/me", "/api/v1/capabilities", "/api/v1/workspaces"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+                self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+                self.assertIn("camera=()", response.headers["Permissions-Policy"])
+
 
 if __name__ == "__main__":
     unittest.main()

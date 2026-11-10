@@ -119,6 +119,39 @@ EVENT_STATUSES = {
     "subscription.expired": "expired",
 }
 
+TERMINAL_SUBSCRIPTION_STATUSES = frozenset({"cancelled", "completed", "expired"})
+
+
+def reconcile_subscription_event(sub: dict[str, Any], event: dict[str, Any],
+                                 event_at: datetime) -> dict[str, Any] | None:
+    """Calculate a safe state change without trusting webhook delivery order.
+
+    A paid renewal can extend the recorded paid period, but it cannot resurrect
+    a subscription that has already reached a terminal state. This function is
+    deliberately pure so event ordering/retry scenarios can be tested without
+    creating synthetic charges against Razorpay or customer rows in Neon.
+    """
+    state = EVENT_STATUSES.get(event["event_type"])
+    captured = (event["event_type"] == "subscription.charged" and event["captured"]
+                and event["amount_paise"] == sub["amount_paise"])
+    recent = sub["last_event_at"] is None or event_at > sub["last_event_at"]
+    if not state or not (recent or captured):
+        return None
+
+    status = sub["status"]
+    if recent and not (event["event_type"] == "subscription.charged" and not captured):
+        if status not in TERMINAL_SUBSCRIPTION_STATUSES:
+            status = state
+    paid_through = sub["paid_through"]
+    paid_count = sub["paid_count"]
+    if captured:
+        next_end = datetime.fromtimestamp(event["period_end"], tz=timezone.utc)
+        if paid_through is None or next_end > paid_through:
+            paid_through = next_end
+        paid_count = max(paid_count, event["paid_count"])
+    return {"status": status, "paid_through": paid_through, "paid_count": paid_count,
+            "last_event_at": event_at if recent else sub["last_event_at"]}
+
 
 class BillingWebhookStore:
     def __init__(self, dsn: str) -> None:
@@ -159,31 +192,15 @@ class BillingWebhookStore:
                             resolution = "plan_mismatch"
                         elif sub:
                             resolution = "ignored"
-                            state = EVENT_STATUSES.get(event["event_type"])
-                            captured = (event["event_type"] == "subscription.charged" and event["captured"]
-                                        and event["amount_paise"] == sub["amount_paise"])
-                            # A webhook may be delivered after a newer event. Only
-                            # captured money can extend the paid-through date; an old
-                            # event may never reset a terminal/newer status.
-                            recent = sub["last_event_at"] is None or event_at > sub["last_event_at"]
-                            if state and (recent or captured):
-                                new_status = state if recent else sub["status"]
-                                if event["event_type"] == "subscription.charged" and not captured:
-                                    new_status = sub["status"]
-                                paid_through = sub["paid_through"]
-                                paid_count = sub["paid_count"]
-                                if captured:
-                                    next_end = datetime.fromtimestamp(event["period_end"], tz=timezone.utc)
-                                    if paid_through is None or next_end > paid_through:
-                                        paid_through = next_end
-                                    paid_count = max(paid_count, event["paid_count"])
+                            update = reconcile_subscription_event(sub, event, event_at)
+                            if update is not None:
                                 cursor.execute("""
                                     UPDATE zyvello.billing_subscriptions
                                        SET status=%s, paid_through=%s, paid_count=%s,
                                            last_event_at=%s, updated_at=now()
                                      WHERE id=%s
-                                """, (new_status, paid_through, paid_count,
-                                      event_at if recent else sub["last_event_at"], sub["id"]))
+                                """, (update["status"], update["paid_through"], update["paid_count"],
+                                      update["last_event_at"], sub["id"]))
                                 resolution = "applied"
                         cursor.execute("""
                             INSERT INTO zyvello.billing_webhook_events
