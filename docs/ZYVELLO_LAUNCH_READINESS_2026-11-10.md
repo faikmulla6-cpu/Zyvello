@@ -2,7 +2,7 @@
 
 Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOMERS**.
 
-## Subsequent security and renewal work — awaiting staging release
+## Subsequent security and renewal work — deployed to Modal staging
 
 - Hardened the Razorpay webhook request path with bounded streaming before
   signature verification, rather than unbounded buffering of a forged payload.
@@ -17,8 +17,9 @@ Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOME
   simulations, **not** a second live Test Mode renewal capture.
 - Added a hosted account password-recovery UI using Neon's documented
   `forgetPassword.emailOtp` and `emailOtp.resetPassword` client methods. The
-  TypeScript and Vite production build passed; an actual email receipt and
-  password reset are still to be tested in staging.
+  TypeScript and hosted Vite production build passed. The deployed browser
+  shows the recovery entry point and email form, but an actual email receipt
+  and password reset are still to be tested with an approved account.
 - The user has now authorized automatic-renewal testing in Razorpay **Test
   Mode**. An actual second scheduled monthly charge, provider retry schedule,
   refund/chargeback handling, and deployed-database replay remain unverified.
@@ -26,6 +27,19 @@ Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOME
   desktop Python environment: **1,533 passed, 184 skipped, 0 failed** (5m38s).
   Skipped cases are not counted as passing; this was a local suite, not the
   GitHub-hosted CI pipeline or production environment.
+- The revised `zyvello-staging` app deployed successfully in Modal. Live
+  staging HTTP returned **401** for unauthenticated `/api/v1/me`, with
+  `Cache-Control: no-store`, `X-Frame-Options: DENY`, and no-sniff/referrer/
+  permissions headers. `/api/v1/capabilities` confirms no AI execution,
+  outbound sending, or live charging. `/readyz` remains **503 by design**;
+  the launch blockers have not been lifted.
+- Neon Auth branch settings were inspected again: signup is disabled,
+  verification is required, and `revoke_sessions_on_password_reset=true`.
+  **Production blockers:** the auth email provider is still Neon's shared
+  developer SMTP, the trusted origin list contains only the Modal staging URL,
+  and `allow_localhost=true`. Configure and verify these appropriately before
+  a production domain cutover; do not accidentally change this staging auth
+  branch while customers depend on it.
 
 ## Verified on the staging path
 
