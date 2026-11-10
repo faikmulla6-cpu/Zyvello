@@ -84,7 +84,8 @@ profile and must never receive these secrets. Two secrets exist in `main`:
 | --- | --- | --- |
 | `zyvello-staging-api-db` | `ZYVELLO_API_DATABASE_URL` | `web` |
 | `zyvello-staging-worker-db` | `ZYVELLO_WORKER_DATABASE_URL` | `process_jobs` |
-| `zyvello-staging-billing` | `ZYVELLO_BILLING_DATABASE_URL` and `ZYVELLO_RAZORPAY_*` (below) | `web` only |
+| `zyvello-staging-billing-db` | `ZYVELLO_BILLING_DATABASE_URL` | `web` only, restricted DB role |
+| `zyvello-staging-billing` | `ZYVELLO_RAZORPAY_*` (below) | `web` only, Razorpay test configuration |
 
 Connection strings reside in Modal Secrets, never in git or browser assets.
 On Windows select process environment `MODAL_PROFILE=zyvello` and set
@@ -129,7 +130,9 @@ Create the named **Modal** Secret `zyvello-staging-billing` in the dedicated
 `zyvello` workspace, initially with `ZYVELLO_RAZORPAY_MODE=disabled` so
 the staging app can be deployed safely. Once staged schema v5, a separately
 created restricted DB role and **test-only** secrets have been verified,
-configure the following in the same Secret:
+configure the following **payment** variables in that Secret. Store the
+restricted Neon billing role DSN in the separate `zyvello-staging-billing-db`
+Secret so that billing key rotation does not affect database access:
 
 | Environment variable | Value |
 | --- | --- |
@@ -137,7 +140,6 @@ configure the following in the same Secret:
 | `ZYVELLO_RAZORPAY_KEY_ID` | Razorpay **Test** key ID, begins `rzp_test_` |
 | `ZYVELLO_RAZORPAY_KEY_SECRET` | Matching test API key secret |
 | `ZYVELLO_RAZORPAY_WEBHOOK_SECRET` | Separate secret from Test Mode webhook settings |
-| `ZYVELLO_BILLING_DATABASE_URL` | Restricted `zyvello_billing_staging` Neon PostgreSQL role DSN |
 | `ZYVELLO_RAZORPAY_PLANS_JSON` | JSON object mapping chosen plan codes to Razorpay Test Mode plan IDs and verified INR paise amounts |
 
 Example JSON *shape only*, not a real pricing decision:
