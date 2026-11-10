@@ -93,6 +93,29 @@ class RazorpayCryptoTests(unittest.TestCase):
         with self.assertRaises(BillingRejected):
             parse_verified_webhook(b"{}", "evt_12345678903")
 
+    def test_failed_or_uncaptured_payments_never_qualify_for_entitlement(self):
+        for index, change in enumerate((
+            {"status": "failed"},
+            {"status": "authorized"},
+            {"currency": "USD"},
+            {"amount": 0},
+            {"id": "invalid_payment"},
+        ), start=1):
+            with self.subTest(change=change):
+                raw = json.loads(event_body())
+                raw["payload"]["payment"]["entity"].update(change)
+                parsed = parse_verified_webhook(json.dumps(raw).encode(), f"evt_failed_{index:03d}")
+                self.assertFalse(parsed["captured"])
+                self.assertIsNone(parsed["amount_paise"])
+                self.assertIsNone(parsed["payment_id"])
+
+        for field, value in (("paid_count", 0), ("current_end", None)):
+            with self.subTest(field=field):
+                raw = json.loads(event_body())
+                raw["payload"]["subscription"]["entity"][field] = value
+                parsed = parse_verified_webhook(json.dumps(raw).encode(), "evt_uncaptured_01")
+                self.assertFalse(parsed["captured"])
+
     def test_gateway_checks_remote_plan_price_before_creating_subscription(self):
         gateway = RazorpayGateway(settings())
         responses = [{"id": PLAN_ID, "item": {"amount": 9900, "currency": "INR"},
@@ -231,6 +254,11 @@ class RazorpayApiTests(unittest.TestCase):
                    "Content-Type": "application/json"}
         self.assertEqual(self.client.post(path, data=body).status_code, 400)
         self.assertEqual(self.client.post(path, data=body + b" ", headers=headers).status_code, 400)
+        self.assertEqual(self.client.post(path, data=body, headers={**headers,
+            "x-razorpay-event-id": "invalid event id"}).status_code, 400)
+        self.assertEqual(self.client.post(path, data=b" " * (1024 * 1024 + 1),
+                                          headers=headers).status_code, 413)
+        self.assertEqual(self.webhooks.events, set())
         self.assertEqual(self.client.post(path, data=body, headers=headers).status_code, 200)
         self.assertEqual(self.client.post(path, data=body, headers=headers).status_code, 200)
         self.assertEqual(len(self.webhooks.events), 1)

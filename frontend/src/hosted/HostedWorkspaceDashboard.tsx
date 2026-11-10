@@ -78,6 +78,7 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
   const [busyPlan, setBusyPlan] = useState("");
   const [feedback, setFeedback] = useState("");
   const [billingError, setBillingError] = useState("");
+  const [checkingBilling, setCheckingBilling] = useState(true);
 
   const refresh = useCallback(async () => {
     const [configured, status] = await Promise.all([
@@ -96,11 +97,26 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
         setSubscriptions(result.subscriptions);
         setEnabled(true);
       }
-    }).catch(() => {
-      if (!cancelled) setEnabled(false);
+    }).catch(cause => {
+      if (!cancelled) {
+        setEnabled(false);
+        setBillingError(cause instanceof Error ? cause.message : "Billing configuration check failed");
+      }
+    }).finally(() => {
+      if (!cancelled) setCheckingBilling(false);
     });
     return () => { cancelled = true; };
   }, [refresh]);
+
+  async function refreshBilling() {
+    try {
+      const result = await refresh();
+      setSubscriptions(result.subscriptions);
+      setBillingError("");
+    } catch (cause) {
+      setBillingError(cause instanceof Error ? cause.message : "Could not refresh billing");
+    }
+  }
 
   async function tryCheckout(plan: BillingPlan) {
     if (!owner || !enabled || busyPlan) return;
@@ -131,9 +147,18 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
             body: JSON.stringify({ razorpay_payment_id: result.razorpay_payment_id,
               razorpay_signature: result.razorpay_signature }),
           }).then(async () => {
-            setFeedback("Test checkout verified. Access is confirmed only after Razorpay's signed payment webhook arrives.");
-            const refreshed = await refresh();
-            setSubscriptions(refreshed.subscriptions);
+            setFeedback("Test checkout verified. Waiting for Razorpay's signed payment webhook…");
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+              const refreshed = await refresh();
+              setSubscriptions(refreshed.subscriptions);
+              const latest = refreshed.subscriptions.find(sub => sub.id === created.intent_id);
+              if (latest?.entitled) {
+                setFeedback("Test payment confirmed. Test access is active.");
+                return;
+              }
+              if (attempt < 4) await new Promise(resolve => window.setTimeout(resolve, 1500));
+            }
+            setFeedback("Checkout verified, but payment confirmation is still pending. Use Refresh billing to check again.");
           }).catch(cause => setBillingError(cause instanceof Error ? cause.message : "Checkout verification failed"));
         },
       });
@@ -153,9 +178,13 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
           <h2 className="text-xl font-semibold">Billing</h2>
           <p className="mt-1 text-sm text-gray-400">Separate per workspace. Live payments are not enabled.</p>
         </div>
-        <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-amber-200">TEST MODE</span>
+        <div className="flex items-center gap-2">
+          <button type="button" className="rounded-full border border-white/20 px-3 py-1 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-40"
+            disabled={!enabled} onClick={() => void refreshBilling()}>Refresh billing</button>
+          <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-amber-200">TEST MODE</span>
+        </div>
       </div>
-      {!enabled ? <p className="mt-4 text-sm text-gray-300">Payment testing is not configured yet. No payment will be collected.</p> : <>
+      {!enabled ? <p className="mt-4 text-sm text-gray-300">{checkingBilling ? "Checking billing configuration…" : "Payment testing is not configured yet. No payment will be collected."}</p> : <>
         <div className="mt-5 space-y-2">
           {subscriptions.length === 0 ? <p className="text-sm text-gray-400">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
             <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
