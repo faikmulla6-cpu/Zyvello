@@ -75,6 +75,12 @@ versions 1, 2, 3 and 4 confirmed. Synthetic accounts on the isolated branch
 verified that a second workspace could not see or insert the first workspace's
 records. These are **not** Hostinger's production data.
 
+On 2026-11-10, migration **0005** was also applied to isolated dev, followed
+by the Neon staging `main` branch (`br-ancient-credit-aownmkn7`). Staging schema
+versions 1–5 were confirmed. Role privilege checks verified that
+`zyvello_billing_staging` cannot read contacts or create objects; the API
+cannot update billing rows, and the worker has no billing permissions.
+
 ## Modal deployment
 
 Use the existing **zyvello** CLI profile; ClipKaro has a separate Modal
@@ -86,6 +92,11 @@ profile and must never receive these secrets. Two secrets exist in `main`:
 | `zyvello-staging-worker-db` | `ZYVELLO_WORKER_DATABASE_URL` | `process_jobs` |
 | `zyvello-staging-billing-db` | `ZYVELLO_BILLING_DATABASE_URL` | `web` only, restricted DB role |
 | `zyvello-staging-billing` | `ZYVELLO_RAZORPAY_*` (below) | `web` only, Razorpay test configuration |
+
+On 2026-11-10 these latter two Modal Secrets were created in the `zyvello`
+workspace: the restricted billing DB connection is present and the payment
+configuration contains only `ZYVELLO_RAZORPAY_MODE=disabled`. No Razorpay API
+keys, webhook secret or actual plan IDs have been supplied or activated.
 
 Connection strings reside in Modal Secrets, never in git or browser assets.
 On Windows select process environment `MODAL_PROFILE=zyvello` and set
@@ -165,6 +176,18 @@ customer cancellation before enabling live payments. This version offers no
 live mode even if `rzp_live_` credentials are supplied.
 
 ## Verified checks (2026-11-09)
+
+**Razorpay staging addition on 2026-11-10:** 24 local Python hosted/API/billing
+tests passed (no real Razorpay API calls). Windows TypeScript/Vite production
+build passed with hosted mode enabled, including the new billing panel. The
+Modal staging deployment accepted the new API and Secrets. After the latest
+deployment, `/healthz` returned 200, `/app` returned 200, anonymous workspace
+API returned 401, `/api/v1/capabilities` returned 200 reporting
+`payments_enabled=false` and `razorpay_test_billing_ready=false`, and a POST
+to the unconfigured Razorpay webhook returned 503. Real Razorpay sandbox
+payment, webhook delivery/reconciliation and end-to-end entitlement tests
+remain **unverified** pending keys and plans. GitHub CI for the new branch
+commit has not been independently confirmed.
 
 - Local Python hosted auth/API tests: **16 passed** at branch commit
   `50074da5421604e4d2e6f13a356a2a5408baec23`.
