@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
@@ -17,6 +17,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
+from .billing_store import BillingApiStore, BillingWebhookStore
+from .razorpay_billing import (MAX_WEBHOOK_BODY_BYTES, BillingRejected, BillingSettings,
+                               BillingUnavailable, RazorpayGateway, parse_verified_webhook,
+                               verify_checkout_signature, verify_webhook_signature)
 from .repository import HostedStore, StoreConflict, StoreForbidden, StoreLimit, StoreNotFound, StoreUnavailable, serialize_row
 
 
@@ -47,12 +51,29 @@ class AddCampaignContactRequest(BaseModel):
     contact_id: UUID
 
 
+class CreateSubscriptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_code: str = Field(min_length=2, max_length=40, pattern=r"^[a-z][a-z0-9_-]{1,39}$")
+    idempotency_key: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]{8,100}$")
+
+
+class VerifySubscriptionCheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    razorpay_payment_id: str = Field(pattern=r"^pay_[A-Za-z0-9]{8,40}$")
+    razorpay_signature: str = Field(min_length=64, max_length=64)
+
+
 def create_app(
     *, auth_base_url: str | None = None,
     static_dir: str | None = None,
     database_url: str | None = None,
     dispatch_job: Callable[[], None] | None = None,
     store_override: HostedStore | None = None,
+    billing_database_url: str | None = None,
+    billing_settings_override: BillingSettings | None = None,
+    billing_api_override: BillingApiStore | None = None,
+    billing_webhook_override: BillingWebhookStore | None = None,
+    billing_gateway_override: RazorpayGateway | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Zyvello staging workspace API",
@@ -62,6 +83,10 @@ def create_app(
     )
     verifier = NeonTokenVerifier(auth_base_url) if auth_base_url else None
     store = store_override or (HostedStore(database_url) if database_url else None)
+    billing_api = billing_api_override or (BillingApiStore(database_url) if database_url else None)
+    billing_webhooks = billing_webhook_override or (BillingWebhookStore(billing_database_url) if billing_database_url else None)
+    billing_settings = billing_settings_override or BillingSettings.from_env()
+    billing_gateway = billing_gateway_override or (RazorpayGateway(billing_settings) if billing_settings.enabled else None)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["https://zyvello--zyvello-staging-web.us-east.modal.run"],
@@ -100,6 +125,11 @@ def create_app(
             raise HTTPException(429, str(error), headers={"Retry-After": "30"}) from None
         except StoreUnavailable:
             raise HTTPException(503, "Workspace database is temporarily unavailable") from None
+
+    def ready_billing() -> tuple[BillingApiStore, RazorpayGateway]:
+        if not billing_settings.enabled or billing_api is None or billing_gateway is None or billing_webhooks is None:
+            raise HTTPException(503, "Test-mode billing is not configured")
+        return billing_api, billing_gateway
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -191,6 +221,87 @@ def create_app(
                 pass
         return {"job": serialize_row(row), "dispatch_requested": dispatch_requested}
 
+    @app.get("/api/v1/workspaces/{workspace_id}/billing")
+    async def billing_status(workspace_id: UUID, identity=Depends(verified_identity),
+                             billing: tuple = Depends(ready_billing)):
+        api, _ = billing
+        rows = await store_call(api.list_subscriptions, identity.user_id, workspace_id)
+        return {"subscriptions": [serialize_row(row) for row in rows], "mode": "test"}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/billing/plans")
+    async def billing_plans(workspace_id: UUID, identity=Depends(verified_identity),
+                            billing: tuple = Depends(ready_billing)):
+        api, _ = billing
+        # Membership is resolved by RLS for the provided verified identity.
+        await store_call(api.list_subscriptions, identity.user_id, workspace_id)
+        return {"mode": "test", "plans": [plan.public() for plan in billing_settings.plans.values()]}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/billing/subscriptions", status_code=201)
+    async def create_billing_subscription(workspace_id: UUID, body: CreateSubscriptionRequest,
+                                          identity=Depends(verified_identity), billing: tuple = Depends(ready_billing)):
+        api, gateway = billing
+        plan = billing_settings.plans.get(body.plan_code)
+        if plan is None:
+            raise HTTPException(422, "Unknown billing plan")
+        reservation = await store_call(api.reserve_subscription, identity.user_id, workspace_id,
+                                       plan=plan, idempotency_key=body.idempotency_key)
+        provider_id = reservation.get("provider_subscription_id")
+        if not reservation["created"] and not provider_id:
+            # Provider calls have no documented general idempotency header.
+            # An ambiguous first request must be reconciled, not charged twice.
+            return JSONResponse(status_code=202, content={"status": "pending_reconciliation"})
+        if reservation["created"]:
+            try:
+                provider_id = await asyncio.to_thread(gateway.create_subscription,
+                                                      plan=plan, local_intent_id=str(reservation["id"]))
+            except BillingUnavailable:
+                raise HTTPException(503, "Gateway unavailable; contact support before retrying") from None
+            await store_call(api.finalize_subscription, identity.user_id, reservation["id"], provider_id)
+        return {
+            "mode": "test", "key_id": billing_settings.key_id,
+            "subscription_id": provider_id, "intent_id": str(reservation["id"]),
+            "plan": plan.public(), "status": "checkout_ready",
+        }
+
+    @app.post("/api/v1/workspaces/{workspace_id}/billing/subscriptions/{subscription_id}/verify")
+    async def verify_billing_checkout(workspace_id: UUID, subscription_id: UUID,
+                                      body: VerifySubscriptionCheckoutRequest,
+                                      identity=Depends(verified_identity), billing: tuple = Depends(ready_billing)):
+        api, _ = billing
+        sub = await store_call(api.get_checkout_subscription, identity.user_id, workspace_id, subscription_id)
+        if not sub["provider_subscription_id"]:
+            raise HTTPException(409, "Subscription has not been created")
+        try:
+            verify_checkout_signature(payment_id=body.razorpay_payment_id,
+                                      stored_subscription_id=sub["provider_subscription_id"],
+                                      signature=body.razorpay_signature,
+                                      key_secret=billing_settings.key_secret)
+        except BillingRejected:
+            raise HTTPException(400, "Invalid checkout signature") from None
+        await store_call(api.mark_checkout_verified, identity.user_id, subscription_id,
+                         body.razorpay_payment_id)
+        return {"authorization_verified": True, "entitlement_pending_webhook": True}
+
+    @app.post("/api/v1/billing/razorpay/webhook")
+    async def razorpay_webhook(request: Request,
+                              x_razorpay_signature: str | None = Header(default=None),
+                              x_razorpay_event_id: str | None = Header(default=None)):
+        if not billing_settings.enabled or billing_webhooks is None:
+            raise HTTPException(503, "Billing webhook not configured")
+        if request.headers.get("content-length", "").isdigit() and int(request.headers["content-length"]) > MAX_WEBHOOK_BODY_BYTES:
+            raise HTTPException(413, "Webhook payload too large")
+        raw = await request.body()
+        if len(raw) > MAX_WEBHOOK_BODY_BYTES:
+            raise HTTPException(413, "Webhook payload too large")
+        try:
+            verify_webhook_signature(raw_body=raw, signature=x_razorpay_signature or "",
+                                     webhook_secret=billing_settings.webhook_secret)
+            event = parse_verified_webhook(raw, x_razorpay_event_id or "")
+        except BillingRejected:
+            raise HTTPException(400, "Invalid Razorpay webhook") from None
+        await store_call(billing_webhooks.record, event)
+        return {"received": True}
+
     @app.get("/api/v1/capabilities")
     async def capabilities():
         return {
@@ -202,6 +313,7 @@ def create_app(
             "ai_enabled": False,
             "outbound_sending_enabled": False,
             "payments_enabled": False,
+            "razorpay_test_billing_ready": bool(billing_settings.enabled and billing_api and billing_webhooks),
         }
 
     # Optional *staging-only* static preview. This does not mount the legacy

@@ -34,7 +34,13 @@ def process_jobs():
 
 @app.function(
     image=image, min_containers=0, max_containers=1, timeout=30,
-    secrets=[modal.Secret.from_name("zyvello-staging-api-db")],
+    secrets=[
+        modal.Secret.from_name("zyvello-staging-api-db"),
+        # Create this Secret with ZYVELLO_RAZORPAY_MODE=disabled first.
+        # Billing remains fail-closed until *test* keys and the restricted
+        # webhook DB role connection are supplied through Modal (not Hostinger).
+        modal.Secret.from_name("zyvello-staging-billing"),
+    ],
 )
 @modal.asgi_app()
 def web():
@@ -49,5 +55,6 @@ def web():
         auth_base_url="https://ep-restless-cloud-aodhugwx.neonauth.c-2.ap-southeast-1.aws.neon.tech/neondb/auth",
         static_dir="/app/zyvello_frontend",
         database_url=os.environ.get("ZYVELLO_API_DATABASE_URL"),
+        billing_database_url=os.environ.get("ZYVELLO_BILLING_DATABASE_URL"),
         dispatch_job=dispatch_job,
     )

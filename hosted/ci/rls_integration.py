@@ -9,6 +9,7 @@ from pathlib import Path
 import unittest
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 
 DB_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -17,14 +18,43 @@ WORKER_URL = os.environ.get("TEST_POSTGRES_WORKER_URL")
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
 
+def sql_statements(sql: str) -> list[str]:
+    """Split at top-level semicolons, preserving PL/pgSQL $$ function bodies."""
+    statements, start = [], 0
+    quoted = dollar = comment = False
+    i = 0
+    while i < len(sql):
+        char, next_char = sql[i], sql[i + 1] if i + 1 < len(sql) else ""
+        if comment:
+            if char == "\n":
+                comment = False
+        elif not quoted and not dollar and char == "-" and next_char == "-":
+            comment = True
+            i += 1
+        elif not quoted and char == "$" and next_char == "$":
+            dollar = not dollar
+            i += 1
+        elif not dollar and char == "'":
+            if quoted and next_char == "'":
+                i += 1
+            else:
+                quoted = not quoted
+        elif not quoted and not dollar and char == ";":
+            statement = sql[start:i + 1].strip()
+            if statement:
+                statements.append(statement)
+            start = i + 1
+        i += 1
+    if quoted or dollar or sql[start:].strip():
+        raise ValueError("SQL migration contains an incomplete statement")
+    return statements
+
+
 def execute_sql_file(conn: psycopg.Connection, filename: str) -> None:
     sql = (MIGRATIONS / filename).read_text(encoding="utf-8")
     with conn.cursor() as cursor:
-        # The checked-in migration files have no semicolons inside a
-        # dollar-quoted function body; their statements end with ";\n".
-        for statement in sql.split(";\n"):
-            if statement.strip():
-                cursor.execute(statement.strip() + ";")
+        for statement in sql_statements(sql):
+            cursor.execute(statement)
 
 
 @unittest.skipUnless(DB_URL and API_URL and WORKER_URL, "Disposable PostgreSQL service not configured")
@@ -36,11 +66,15 @@ class RequestScopedRlsTests(unittest.TestCase):
         with cls.owner.cursor() as cursor:
             cursor.execute("CREATE ROLE zyvello_api_staging LOGIN PASSWORD 'ci-local-only'")
             cursor.execute("CREATE ROLE zyvello_worker_staging LOGIN PASSWORD 'ci-local-only'")
+            cursor.execute("CREATE ROLE zyvello_billing_staging LOGIN PASSWORD 'ci-local-only'")
             cursor.execute("GRANT USAGE ON SCHEMA zyvello TO zyvello_api_staging")
+            cursor.execute("GRANT USAGE ON SCHEMA zyvello TO zyvello_billing_staging")
             cursor.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA zyvello TO zyvello_api_staging")
         execute_sql_file(cls.owner, "0002_request_scoped_rls.sql")
         execute_sql_file(cls.owner, "0003_workspace_api_and_worker.sql")
         execute_sql_file(cls.owner, "0004_contact_campaign_drafts.sql")
+        execute_sql_file(cls.owner, "0005_razorpay_test_billing.sql")
+        cls.billing_url = make_conninfo(API_URL, user="zyvello_billing_staging", password="ci-local-only")
         with cls.owner.cursor() as cursor:
             cursor.execute("""
                 INSERT INTO zyvello.workspaces (id, slug, name, created_by_auth_user_id)
@@ -230,6 +264,58 @@ class RequestScopedRlsTests(unittest.TestCase):
                 for table in ("contacts", "campaigns", "campaign_contacts"):
                     self.assertFalse(conn.execute("SELECT has_table_privilege(current_user, %s, 'UPDATE')", ("zyvello." + table,)).fetchone()[0])
                     self.assertFalse(conn.execute("SELECT has_table_privilege(current_user, %s, 'DELETE')", ("zyvello." + table,)).fetchone()[0])
+
+    def test_billing_intent_is_private_and_does_not_grant_paid_access(self):
+        with psycopg.connect(API_URL) as conn:
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', 'test-auth-a', true)")
+                conn.execute("""
+                    INSERT INTO zyvello.billing_subscriptions
+                      (id,workspace_id,plan_code,amount_paise,provider_plan_id,
+                       idempotency_key,created_by_auth_user_id)
+                    VALUES ('00000000-0000-4000-8000-0000000000f1',
+                            '00000000-0000-4000-8000-0000000000a1',
+                            'starter',9900,'plan_12345678901234','test-intent-1234','test-auth-a')
+                """)
+                self.assertTrue(conn.execute("""
+                    SELECT zyvello.finalize_billing_subscription(
+                        '00000000-0000-4000-8000-0000000000f1','sub_12345678901234')
+                """).fetchone()[0])
+                self.assertFalse(conn.execute("""
+                    SELECT (status='active' AND paid_through>now())
+                    FROM zyvello.billing_subscriptions
+                    WHERE id='00000000-0000-4000-8000-0000000000f1'
+                """).fetchone()[0])
+                self.assertFalse(conn.execute("SELECT has_table_privilege(current_user,'zyvello.billing_subscriptions','UPDATE')").fetchone()[0])
+                self.assertFalse(conn.execute("SELECT has_table_privilege(current_user,'zyvello.billing_webhook_events','SELECT')").fetchone()[0])
+            with conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id', 'test-auth-b', true)")
+                self.assertEqual(conn.execute("SELECT count(*) FROM zyvello.billing_subscriptions").fetchone()[0], 0)
+                self.assertFalse(conn.execute("""
+                    SELECT zyvello.mark_billing_checkout_verified(
+                        '00000000-0000-4000-8000-0000000000f1','pay_12345678901234')
+                """).fetchone()[0])
+
+    def test_billing_webhook_role_can_reconcile_only_billing_tables(self):
+        from psycopg.errors import InsufficientPrivilege
+        with psycopg.connect(self.billing_url) as conn:
+            with conn.transaction():
+                self.assertFalse(conn.execute("SELECT has_schema_privilege(current_user,'zyvello','CREATE')").fetchone()[0])
+                conn.execute("""
+                    UPDATE zyvello.billing_subscriptions
+                    SET status='active',paid_through=now()+interval '30 days',paid_count=1
+                    WHERE provider_subscription_id='sub_12345678901234'
+                """)
+                conn.execute("""
+                    INSERT INTO zyvello.billing_webhook_events
+                      (event_id,event_type,provider_subscription_id,body_sha256,event_at,resolution)
+                    VALUES ('evt_ci_1234567','subscription.charged','sub_12345678901234',
+                            repeat('a',64),now(),'applied')
+                """)
+            for table in ("contacts", "campaigns", "workspaces", "memberships", "jobs", "schema_migrations"):
+                with self.assertRaises(InsufficientPrivilege):
+                    with conn.transaction():
+                        conn.execute(f"SELECT * FROM zyvello.{table}")
 
 
 if __name__ == "__main__":

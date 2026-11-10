@@ -15,6 +15,36 @@ type Job = {
   last_error: string | null;
   created_at: string;
 };
+type BillingPlan = { code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number };
+type BillingSubscription = {
+  id: string; plan_code: string; status: string; checkout_verified: boolean;
+  paid_through: string | null; paid_count: number; entitled: boolean;
+};
+type RazorpayCheckoutResult = { razorpay_payment_id: string; razorpay_signature: string };
+type RazorpayOptions = {
+  key: string; subscription_id: string; name: string; description: string;
+  handler: (result: RazorpayCheckoutResult) => void;
+};
+
+declare global {
+  interface Window { Razorpay?: new (options: RazorpayOptions) => { open: () => void } }
+}
+
+function loadCheckoutScript(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const prior = document.querySelector<HTMLScriptElement>('script[data-zyvello-razorpay="1"]');
+    const script = prior || document.createElement("script");
+    script.onload = () => window.Razorpay ? resolve() : reject(new Error("Checkout could not initialize"));
+    script.onerror = () => reject(new Error("Razorpay Checkout could not load"));
+    if (!prior) {
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.dataset.zyvelloRazorpay = "1";
+      document.head.appendChild(script);
+    }
+  });
+}
 
 async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   if (!authClient) throw new Error("Authentication is unavailable");
@@ -39,6 +69,114 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(body?.detail || `Request failed (${response.status})`);
   }
   return response.json() as Promise<T>;
+}
+
+function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: boolean }) {
+  const [plans, setPlans] = useState<BillingPlan[]>([]);
+  const [subscriptions, setSubscriptions] = useState<BillingSubscription[]>([]);
+  const [enabled, setEnabled] = useState(false);
+  const [busyPlan, setBusyPlan] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [billingError, setBillingError] = useState("");
+
+  const refresh = useCallback(async () => {
+    const [configured, status] = await Promise.all([
+      requestApi<{ mode: "test"; plans: BillingPlan[] }>(`/api/v1/workspaces/${workspaceId}/billing/plans`),
+      requestApi<{ mode: "test"; subscriptions: BillingSubscription[] }>(`/api/v1/workspaces/${workspaceId}/billing`),
+    ]);
+    if (configured.mode !== "test" || status.mode !== "test") throw new Error("Checkout is not in test mode");
+    return { plans: configured.plans, subscriptions: status.subscriptions };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void refresh().then(result => {
+      if (!cancelled) {
+        setPlans(result.plans);
+        setSubscriptions(result.subscriptions);
+        setEnabled(true);
+      }
+    }).catch(() => {
+      if (!cancelled) setEnabled(false);
+    });
+    return () => { cancelled = true; };
+  }, [refresh]);
+
+  async function tryCheckout(plan: BillingPlan) {
+    if (!owner || !enabled || busyPlan) return;
+    setBusyPlan(plan.code);
+    setFeedback("");
+    setBillingError("");
+    try {
+      const created = await requestApi<{
+        mode: "test"; key_id: string; subscription_id: string; intent_id: string;
+        status: "checkout_ready";
+      }>(`/api/v1/workspaces/${workspaceId}/billing/subscriptions`, {
+        method: "POST",
+        body: JSON.stringify({ plan_code: plan.code, idempotency_key: crypto.randomUUID().replace(/-/g, "") }),
+      });
+      if (created.mode !== "test" || !created.key_id.startsWith("rzp_test_") || !created.subscription_id.startsWith("sub_")) {
+        throw new Error("Checkout safety check failed");
+      }
+      await loadCheckoutScript();
+      if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable");
+      const checkout = new window.Razorpay({
+        key: created.key_id,
+        subscription_id: created.subscription_id,
+        name: "Zyvello — TEST MODE",
+        description: `${plan.name} (test payment; no live charges)`,
+        handler: result => {
+          void requestApi(`/api/v1/workspaces/${workspaceId}/billing/subscriptions/${created.intent_id}/verify`, {
+            method: "POST",
+            body: JSON.stringify({ razorpay_payment_id: result.razorpay_payment_id,
+              razorpay_signature: result.razorpay_signature }),
+          }).then(async () => {
+            setFeedback("Test checkout verified. Access is confirmed only after Razorpay's signed payment webhook arrives.");
+            const refreshed = await refresh();
+            setSubscriptions(refreshed.subscriptions);
+          }).catch(cause => setBillingError(cause instanceof Error ? cause.message : "Checkout verification failed"));
+        },
+      });
+      checkout.open();
+      setFeedback("Razorpay test Checkout opened. No real money should be collected.");
+    } catch (cause) {
+      setBillingError(cause instanceof Error ? cause.message : "Test checkout could not start");
+    } finally {
+      setBusyPlan("");
+    }
+  }
+
+  return (
+    <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Workspace billing">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">Billing</h2>
+          <p className="mt-1 text-sm text-gray-400">Separate per workspace. Live payments are not enabled.</p>
+        </div>
+        <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-amber-200">TEST MODE</span>
+      </div>
+      {!enabled ? <p className="mt-4 text-sm text-gray-300">Payment testing is not configured yet. No payment will be collected.</p> : <>
+        <div className="mt-5 space-y-2">
+          {subscriptions.length === 0 ? <p className="text-sm text-gray-400">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+            <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
+            {sub.paid_through && <p className="mt-1 text-xs text-gray-400">Paid through: {new Date(sub.paid_through).toLocaleDateString()}</p>}
+          </div>)}
+        </div>
+        {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {plans.map(plan => <div className="rounded-2xl border border-white/15 bg-black/20 p-4" key={plan.code}>
+            <p className="font-medium">{plan.name}</p>
+            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ {plan.interval} {plan.period}</span></p>
+            <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-40" type="button"
+              disabled={!owner || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired", "halted"].includes(sub.status))}
+              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : "Try test checkout"}</button>
+          </div>)}
+        </div>}
+        {!owner && <p className="mt-3 text-xs text-gray-400">Only the workspace owner can manage billing.</p>}
+      </>}
+      {feedback && <p role="status" className="mt-4 text-xs text-emerald-200">{feedback}</p>}
+      {billingError && <p role="alert" className="mt-4 text-xs text-rose-200">{billingError}</p>}
+    </section>
+  );
 }
 
 export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut: () => void; signingOut: boolean }) {
@@ -342,6 +480,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
             </div>)}
           </div>
         </section>}
+        {selected && <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"} />}
       </>}
       <p className="text-xs leading-5 text-gray-400">Private staging only. Prospecting, email delivery, payment collection and production automation will remain unavailable until verified and enabled separately.</p>
     </div>

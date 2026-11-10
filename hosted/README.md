@@ -1,11 +1,15 @@
 # Zyvello hosted SaaS — staging runbook and launch gates
 
-Status: **private staging deployed, not customer-production-ready** (2026-11-09).
+Status: **private staging deployed, not customer-production-ready** (2026-11-10).
 
 The original single-owner Harvey CLI/dashboard, SQLite state, prospecting,
 provider integrations and Groq/Claude/Codex code remain in the repository.
-None of the legacy engine is imported or executed by the hosted API. Razorpay
-and all payment logic are explicitly deferred until the owner supplies keys.
+None of the legacy engine is imported or executed by the hosted API. A
+**test-mode-only** Razorpay Subscriptions adapter and protected billing schema
+have been prepared on the working branch. Payment initiation remains disabled
+until Faik supplies test keys, verified plan prices and IDs, a separate webhook
+secret, and a restricted billing database connection. There is no live charging
+code path or Hostinger production change.
 
 ## Current staging architecture
 
@@ -50,10 +54,18 @@ at the ClipKaro database or live Hostinger database:
    inert campaign drafts, and draft/contact assignments. Read access follows
    membership and insert access requires owner/admin membership. The API has
    SELECT/INSERT, not UPDATE/DELETE, for these tables; the worker has none.
+5. `0005_razorpay_test_billing.sql`: per-workspace subscription intents,
+   delivery-deduplicated webhook ledger, separate billing reconciler role and
+   strict RLS. API owners can create intents but cannot assign entitlements.
+   Only reconciled signed captured-payment events with matching amount and
+   provider plan can advance `paid_through`.
 
-Roles `zyvello_api_staging` and `zyvello_worker_staging` must be **non-owner**
+Roles `zyvello_api_staging`, `zyvello_worker_staging`, and
+`zyvello_billing_staging` must be **non-owner**
 Neon scoped roles. Migration 0003 removes worker table grants other than `jobs`
-SELECT/UPDATE. Never use the schema owner for API or worker: owner roles can
+SELECT/UPDATE. The billing role must lack permissions on contacts, workspace
+tables and migration history; it may read/update only subscription rows and
+read/insert only webhook events. Never use the schema owner for hosted services: owner roles can
 bypass RLS. `SET LOCAL` is application context, NOT an identity credential;
 only verified JWT claims may supply its value.
 
@@ -72,6 +84,7 @@ profile and must never receive these secrets. Two secrets exist in `main`:
 | --- | --- | --- |
 | `zyvello-staging-api-db` | `ZYVELLO_API_DATABASE_URL` | `web` |
 | `zyvello-staging-worker-db` | `ZYVELLO_WORKER_DATABASE_URL` | `process_jobs` |
+| `zyvello-staging-billing` | `ZYVELLO_BILLING_DATABASE_URL` and `ZYVELLO_RAZORPAY_*` (below) | `web` only |
 
 Connection strings reside in Modal Secrets, never in git or browser assets.
 On Windows select process environment `MODAL_PROFILE=zyvello` and set
@@ -81,6 +94,73 @@ URL; deploy `modal_zyvello_staging.py` into Modal environment `main`.
 No Hostinger live files or DNS records are modified by this command.
 
 Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
+
+## Razorpay subscription integration — test only
+
+The new billing module implements these protected endpoints:
+
+- `GET /api/v1/workspaces/{id}/billing`: workspace-scoped subscriptions and
+  **derived** entitlement (`status=active` and `paid_through` in future).
+- `GET /api/v1/workspaces/{id}/billing/plans`: server-published test plans for
+  members of the workspace. Never exposes Razorpay secrets or provider plan IDs.
+- `POST /api/v1/workspaces/{id}/billing/subscriptions`: owner only, requires
+  plan code plus an idempotency key. The backend validates the actual Razorpay
+  plan pricing before creating a subscription. A lost provider response leaves
+  a pending-reconciliation intent; it never charges twice on automatic retry.
+- `POST /api/v1/workspaces/{id}/billing/subscriptions/{intent_id}/verify`:
+  checkout payment signature verification against the **stored** provider
+  subscription ID. This never grants paid access.
+- `POST /api/v1/billing/razorpay/webhook`: public endpoint that immediately
+  rejects unsigned/oversized payloads. HMAC uses the **raw** request body and
+  a distinct webhook secret. Database deduplicates the Razorpay event ID;
+  only the dedicated billing role can record it and update paid-through state.
+
+Set up **Razorpay Test Mode**, create exact test subscription plans in the
+Razorpay Dashboard, and configure a Test Mode webhook at
+`https://zyvello--zyvello-staging-web.us-east.modal.run/api/v1/billing/razorpay/webhook`.
+Subscribe to `subscription.authenticated`, `subscription.activated`,
+`subscription.charged`, `subscription.pending`, `subscription.halted`,
+`subscription.paused`, `subscription.resumed`, `subscription.cancelled`,
+`subscription.completed`, and `subscription.expired`. Keep the webhook signing
+secret distinct from the API key secret. Do not paste secrets into GitHub,
+ChatGPT, frontend assets or source code.
+
+Create the named **Modal** Secret `zyvello-staging-billing` in the dedicated
+`zyvello` workspace, initially with `ZYVELLO_RAZORPAY_MODE=disabled` so
+the staging app can be deployed safely. Once staged schema v5, a separately
+created restricted DB role and **test-only** secrets have been verified,
+configure the following in the same Secret:
+
+| Environment variable | Value |
+| --- | --- |
+| `ZYVELLO_RAZORPAY_MODE` | `test` (anything else stays disabled) |
+| `ZYVELLO_RAZORPAY_KEY_ID` | Razorpay **Test** key ID, begins `rzp_test_` |
+| `ZYVELLO_RAZORPAY_KEY_SECRET` | Matching test API key secret |
+| `ZYVELLO_RAZORPAY_WEBHOOK_SECRET` | Separate secret from Test Mode webhook settings |
+| `ZYVELLO_BILLING_DATABASE_URL` | Restricted `zyvello_billing_staging` Neon PostgreSQL role DSN |
+| `ZYVELLO_RAZORPAY_PLANS_JSON` | JSON object mapping chosen plan codes to Razorpay Test Mode plan IDs and verified INR paise amounts |
+
+Example JSON *shape only*, not a real pricing decision:
+
+```json
+{"starter":{"name":"Example monthly","amount_paise":9900,"razorpay_plan_id":"plan_REPLACE_WITH_TEST_ID","period":"monthly","interval":1,"total_count":12}}
+```
+
+Faik must confirm **actual** plan names/prices/cycle and provision the
+corresponding plan IDs before this is used. `amount_paise` is INR × 100.
+Ensure exact Razorpay amount/currency/period/interval match. Hostinger
+environment keys alone do **not** reach Modal; staging runs on Modal. The
+frontend receives only the test key ID. Do not set live credentials.
+
+Test acceptance gate before any payment launch: two real signed-in workspaces,
+malformed/tampered checkout and webhook signature rejection, replayed webhook,
+out-of-order delivery, wrong plan or amount, pending/failed payment, captured
+payment, cancellation, and idempotent lost-response simulation. Confirm no
+cross-tenant billing visibility. Validate test payment with Razorpay sandbox
+and inspect dashboard events, then check database reconciliation. A developer
+must separately review entitlements, refunds, tax invoices, retries and
+customer cancellation before enabling live payments. This version offers no
+live mode even if `rzp_live_` credentials are supplied.
 
 ## Verified checks (2026-11-09)
 
@@ -135,9 +215,11 @@ Before unrestricted users and paying customers can use Zyvello:
    response before launch.
 7. Configure Hostinger production frontend routing, API origin, TLS,
    trusted domains, CORS and cookie behavior only after staging passes.
-8. Once Faik provides Razorpay keys, separately implement and test server
-   order creation, verified webhook signatures, idempotency, entitlements
-   and reconciliation. **Payment integration is currently absent**.
+8. Razorpay Test Mode subscription code and migration are prepared; configure
+   the restricted billing role, Modal Secret, actual plans, Test Mode webhook,
+   and complete dashboard-to-database sandbox payment tests. Implement refunds,
+   cancellation, invoicing, reconciliation and compliance policy before a
+   separate reviewed live-payment release.
 
 Staging proves the shared workspace/auth/queue foundation, but is not yet
 a production-grade customer outreach service.
