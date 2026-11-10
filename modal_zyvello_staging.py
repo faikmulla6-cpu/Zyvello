@@ -1,7 +1,7 @@
-"""Isolated Zyvello staging UI, workspace API and safe background worker.
+"""Isolated Zyvello staging UI, workspace API and guarded draft worker.
 
 Only deploy with a token scoped to the dedicated `zyvello` Modal workspace.
-No AI calls, outbound messaging, paid providers or recurring schedules.
+AI draft work is disabled by default. Outbound messages are never sent.
 """
 
 import os
@@ -12,7 +12,7 @@ import modal
 app = modal.App("zyvello-staging")
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4")
+    .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1")
     .add_local_python_source("zyvello_hosted")
     .add_local_dir("harvey/web/landing", remote_path="/app/zyvello_frontend")
     .add_local_file("harvey/web/favicon.svg", remote_path="/app/zyvello_frontend/favicon.svg")
@@ -29,7 +29,11 @@ def process_jobs():
     url = os.environ.get("ZYVELLO_WORKER_DATABASE_URL")
     if not url:
         raise RuntimeError("Worker database is not configured")
-    return HostedWorker(url).process_batch(limit=10)
+    return HostedWorker(
+        url,
+        enable_ai_drafts=os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true",
+        encryption_keys=os.getenv("ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"),
+    ).process_batch(limit=10)
 
 
 @app.function(

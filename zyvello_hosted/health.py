@@ -5,6 +5,7 @@ single-tenant SQLite state manager. Neither is safe to expose as a hosted SaaS.
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Callable
 from uuid import UUID
@@ -14,9 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
+from .credentials import CredentialConfigurationError, CredentialVault
 from .billing_store import BillingApiStore, BillingWebhookStore
 from .razorpay_billing import (MAX_WEBHOOK_BODY_BYTES, BillingRejected, BillingSettings,
                                BillingUnavailable, RazorpayGateway, parse_verified_webhook,
@@ -63,6 +65,25 @@ class VerifySubscriptionCheckoutRequest(BaseModel):
     razorpay_signature: str = Field(min_length=64, max_length=64)
 
 
+class PutGroqCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: SecretStr = Field(min_length=36, max_length=256)
+
+
+class ContactPermissionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str = Field(pattern=r"^(claimed_consent|opted_out|suppressed)$")
+    source: str = Field(min_length=3, max_length=100)
+    evidence: str = Field(default="", max_length=1000)
+
+
+class CreateGroqDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    campaign_id: UUID
+    contact_id: UUID
+    idempotency_key: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 def create_app(
     *, auth_base_url: str | None = None,
     static_dir: str | None = None,
@@ -74,6 +95,8 @@ def create_app(
     billing_api_override: BillingApiStore | None = None,
     billing_webhook_override: BillingWebhookStore | None = None,
     billing_gateway_override: RazorpayGateway | None = None,
+    credential_vault_override: CredentialVault | None = None,
+    enable_ai_drafts_override: bool | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Zyvello staging workspace API",
@@ -87,10 +110,15 @@ def create_app(
     billing_webhooks = billing_webhook_override or (BillingWebhookStore(billing_database_url) if billing_database_url else None)
     billing_settings = billing_settings_override or BillingSettings.from_env()
     billing_gateway = billing_gateway_override or (RazorpayGateway(billing_settings) if billing_settings.enabled else None)
+    credential_vault = credential_vault_override
+    if credential_vault is None and os.getenv("ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"):
+        credential_vault = CredentialVault(os.environ["ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"])
+    ai_drafts_enabled = (enable_ai_drafts_override if enable_ai_drafts_override is not None
+                         else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["https://zyvello--zyvello-staging-web.us-east.modal.run"],
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
         allow_credentials=False,
     )
@@ -136,6 +164,8 @@ def create_app(
             raise HTTPException(429, str(error), headers={"Retry-After": "30"}) from None
         except StoreUnavailable:
             raise HTTPException(503, "Workspace database is temporarily unavailable") from None
+        except ValueError:
+            raise HTTPException(422, "Invalid workspace request") from None
 
     def ready_billing() -> tuple[BillingApiStore, RazorpayGateway]:
         if not billing_settings.enabled or billing_api is None or billing_gateway is None or billing_webhooks is None:
@@ -192,6 +222,66 @@ def create_app(
         row = await store_call(db.create_contact, identity.user_id, workspace_id,
                                full_name=body.full_name, email=body.email, company=body.company)
         return {"contact": serialize_row(row)}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission")
+    async def get_contact_permission(workspace_id: UUID, contact_id: UUID,
+                                     identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.get_contact_permission, identity.user_id, workspace_id, contact_id)
+        return {"permission": serialize_row(row), "outbound_allowed": False}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission", status_code=201)
+    async def record_contact_permission(workspace_id: UUID, contact_id: UUID, body: ContactPermissionRequest,
+                                        identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.record_contact_permission, identity.user_id, workspace_id, contact_id,
+                               action=body.action, source=body.source, evidence=body.evidence)
+        return {"permission": serialize_row(row), "outbound_allowed": False}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    async def groq_credential_status(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.get_groq_credential_status, identity.user_id, workspace_id)
+        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
+
+    @app.put("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    async def save_groq_credential(workspace_id: UUID, body: PutGroqCredentialRequest,
+                                   identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        if credential_vault is None:
+            raise HTTPException(503, "Credential encryption is not configured")
+        try:
+            ciphertext = credential_vault.seal(body.api_key.get_secret_value())
+        except (CredentialConfigurationError, ValueError):
+            raise HTTPException(422, "Invalid provider credential") from None
+        row = await store_call(db.put_groq_credential, identity.user_id, workspace_id, ciphertext=ciphertext)
+        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
+
+    @app.delete("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    async def remove_groq_credential(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.delete_groq_credential, identity.user_id, workspace_id)
+        return {"provider": "groq", **row, "ai_execution_enabled": ai_drafts_enabled}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/drafts")
+    async def list_generated_drafts(workspace_id: UUID, identity=Depends(verified_identity),
+                                    db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_generated_drafts, identity.user_id, workspace_id)
+        return {"drafts": [serialize_row(row) for row in rows], "outbound_sending_enabled": False}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/drafts", status_code=202)
+    async def enqueue_groq_draft(workspace_id: UUID, body: CreateGroqDraftRequest,
+                                 identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        if not ai_drafts_enabled:
+            raise HTTPException(503, "Hosted AI drafts are not enabled")
+        job = await store_call(db.enqueue_groq_draft, identity.user_id, workspace_id,
+                               campaign_id=body.campaign_id, contact_id=body.contact_id,
+                               idempotency_key=body.idempotency_key)
+        dispatched = False
+        if job["created"] and dispatch_job is not None:
+            try:
+                await asyncio.to_thread(dispatch_job)
+                dispatched = True
+            except Exception:
+                pass
+        return {"job": serialize_row(job), "dispatch_requested": dispatched, "sent": False}
 
     @app.get("/api/v1/workspaces/{workspace_id}/campaigns")
     async def list_campaigns(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
@@ -327,8 +417,10 @@ def create_app(
             "workspace_api": bool(store),
             "contacts_enabled": bool(store),
             "campaign_drafts_enabled": bool(store),
-            "job_kinds": ["workspace_health"],
-            "ai_enabled": False,
+            "consent_audit_enabled": bool(store),
+            "encrypted_groq_key_storage_ready": bool(store and credential_vault),
+            "job_kinds": ["workspace_health"] + (["groq_draft"] if ai_drafts_enabled else []),
+            "ai_enabled": ai_drafts_enabled,
             "outbound_sending_enabled": False,
             "payments_enabled": False,
             "razorpay_test_billing_ready": bool(billing_settings.enabled and billing_api and billing_webhooks),

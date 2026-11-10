@@ -1,8 +1,8 @@
 """Recoverable, database-leased Zyvello staging worker.
 
-The only registered job is an internal workspace health check. No prospect
-collection, AI provider calls, billing, mailbox access, or email sending are
-reachable from this worker. Unrecognized jobs go to dead-letter state.
+Health diagnostics are always available. Optional BYOK Groq work creates
+reviewable drafts only, never performs email sending, prospect scraping or
+mailbox operations. Unrecognized kinds fail without running code.
 """
 
 from __future__ import annotations
@@ -10,17 +10,25 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from .credentials import CredentialVault
+from .groq_drafts import GroqDraftClient
 
 logger = logging.getLogger("zyvello.worker")
 
 
 class HostedWorker:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, enable_ai_drafts: bool = False,
+                 encryption_keys: str | None = None,
+                 groq_client: GroqDraftClient | None = None) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("A PostgreSQL worker connection URL is required")
         self._dsn = dsn
         self._name = "zyvello-" + str(uuid4())[:12]
+        self._ai_enabled = enable_ai_drafts
+        self._vault = CredentialVault(encryption_keys) if enable_ai_drafts else None
+        self._groq = (groq_client or GroqDraftClient()) if enable_ai_drafts else None
 
     def _connect(self):
         import psycopg
@@ -97,13 +105,80 @@ class HostedWorker:
                     raise RuntimeError("Job lease was lost before completion")
 
     def _execute(self, job: dict[str, Any]) -> dict[str, Any]:
-        if job["kind"] != "workspace_health":
-            raise ValueError("Unsupported job kind")
-        return {
-            "outcome": "workspace_queue_healthy",
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-            "note": "This diagnostic did not invoke AI or send messages",
-        }
+        if job["kind"] == "workspace_health":
+            return {
+                "outcome": "workspace_queue_healthy",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "note": "This diagnostic did not invoke AI or send messages",
+            }
+        if job["kind"] == "groq_draft" and self._ai_enabled:
+            return self._generate_draft(job)
+        raise ValueError("Unsupported or disabled job kind")
+
+    def _generate_draft(self, job: dict[str, Any]) -> dict[str, Any]:
+        assert self._vault is not None and self._groq is not None
+        workspace_id = job["workspace_id"]
+        payload = job["payload"]
+        try:
+            campaign_id = UUID(payload["campaign_id"])
+            contact_id = UUID(payload["contact_id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("Invalid draft job metadata") from error
+        with self._connect() as conn:
+            with conn.transaction():
+                old = conn.execute("SELECT id FROM zyvello.generated_drafts WHERE job_id=%s",
+                                   (job["id"],)).fetchone()
+                if old:
+                    return {"outcome": "draft_already_created", "draft_id": str(old["id"]), "sent": False}
+                cursor = conn.execute("""
+                    SELECT c.full_name, c.company, ca.goal, s.ciphertext
+                    FROM zyvello.campaign_contacts cc
+                    JOIN zyvello.contacts c ON c.workspace_id=cc.workspace_id AND c.id=cc.contact_id
+                    JOIN zyvello.campaigns ca ON ca.workspace_id=cc.workspace_id AND ca.id=cc.campaign_id
+                    JOIN zyvello.workspace_provider_secrets s
+                      ON s.workspace_id=cc.workspace_id AND s.provider='groq'
+                    WHERE cc.workspace_id=%s AND cc.campaign_id=%s AND cc.contact_id=%s
+                """, (workspace_id, campaign_id, contact_id))
+                details = cursor.fetchone()
+                if not details:
+                    raise ValueError("Campaign, contact or credential was removed")
+                blocked = conn.execute("""
+                    SELECT 1 FROM zyvello.contact_permission_events
+                    WHERE workspace_id=%s AND contact_id=%s
+                      AND action IN ('opted_out','suppressed') LIMIT 1
+                """, (workspace_id, contact_id)).fetchone()
+                if blocked:
+                    return {"outcome": "suppressed_contact", "sent": False}
+                # Releasing the DB connection before the external HTTP call
+                # avoids holding row locks or consuming a Postgres connection.
+                encrypted = details.pop("ciphertext")
+        key = self._vault.open(encrypted)
+        draft = self._groq.generate(api_key=key, contact_name=details["full_name"],
+                                    company=details["company"], campaign_goal=details["goal"])
+        with self._connect() as conn:
+            with conn.transaction():
+                # A suppression may arrive while the model is processing.
+                blocked = conn.execute("""
+                    SELECT 1 FROM zyvello.contact_permission_events
+                    WHERE workspace_id=%s AND contact_id=%s
+                      AND action IN ('opted_out','suppressed') LIMIT 1
+                """, (workspace_id, contact_id)).fetchone()
+                if blocked:
+                    return {"outcome": "suppressed_contact", "sent": False}
+                cursor = conn.execute("""
+                    INSERT INTO zyvello.generated_drafts
+                        (workspace_id, campaign_id, contact_id, job_id, draft_text)
+                    VALUES (%s,%s,%s,%s,%s)
+                    ON CONFLICT (job_id) DO NOTHING
+                    RETURNING id
+                """, (workspace_id, campaign_id, contact_id, job["id"], draft))
+                row = cursor.fetchone()
+                if not row:
+                    row = conn.execute("SELECT id FROM zyvello.generated_drafts WHERE job_id=%s",
+                                       (job["id"],)).fetchone()
+                if not row:
+                    raise RuntimeError("Draft persistence failed")
+                return {"outcome": "draft_created", "draft_id": str(row["id"]), "sent": False}
 
     def process_batch(self, *, limit: int = 10) -> dict[str, int]:
         succeeded = 0

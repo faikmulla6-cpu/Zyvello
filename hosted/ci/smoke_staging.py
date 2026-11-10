@@ -1,0 +1,72 @@
+"""Read-only smoke checks for the private Zyvello staging API.
+
+Usage:
+  python hosted/ci/smoke_staging.py
+  ZYVELLO_STAGING_URL=https://... python hosted/ci/smoke_staging.py
+
+No authentication, customer data, model calls, or payment requests are sent.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+BASE = os.environ.get(
+    "ZYVELLO_STAGING_URL",
+    "https://zyvello--zyvello-staging-web.us-east.modal.run",
+).rstrip("/")
+
+
+def get(path: str) -> tuple[int, dict, dict]:
+    req = Request(BASE + path, headers={"Accept": "application/json"})
+    try:
+        response = urlopen(req, timeout=25)
+    except HTTPError as error:
+        response = error
+    with response:
+        status = response.status
+        headers = dict(response.headers)
+        payload = response.read(32768).decode("utf-8")
+    try:
+        body = json.loads(payload)
+    except json.JSONDecodeError:
+        body = {}
+    return status, headers, body
+
+
+def check(name: str, condition: bool) -> None:
+    print(f'{"PASS" if condition else "FAIL"} {name}')
+    if not condition:
+        raise AssertionError(name)
+
+
+def main() -> int:
+    try:
+        code, _, body = get("/healthz")
+        check("health endpoint alive", code == 200 and body.get("status") == "alive")
+        code, headers, _ = get("/api/v1/me")
+        check("anonymous identity denied", code == 401)
+        header_names = {name.lower() for name in headers}
+        check("security headers", "x-content-type-options" in header_names)
+        code, _, caps = get("/api/v1/capabilities")
+        check("capabilities endpoint", code == 200 and caps.get("stage") == "private_beta")
+        check(
+            "public sending and paid checkout remain disabled",
+            caps.get("outbound_sending_enabled") is False
+            and caps.get("payments_enabled") is False
+            and caps.get("ai_enabled") is False,
+        )
+        code, _, body = get("/readyz")
+        check("public readiness intentionally gated", code == 503 and body.get("status") == "not_ready")
+    except Exception as error:
+        print(f"SMOKE FAILED: {type(error).__name__}", file=sys.stderr)
+        return 1
+    print("All read-only staging smoke checks passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -2,6 +2,43 @@
 
 Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOMERS**.
 
+## Subsequent draft/consent foundation — code reviewed, not yet promoted
+
+- Added migration 0006 for encrypted per-workspace Groq credentials and an
+  append-only contact permission ledger. Imported contacts start with
+  `unknown` permission. `claimed_consent` does not authorize delivery, and a
+  prior opt-out or suppression cannot be overridden through the API.
+- Added migration 0007 for isolated, idempotent Groq draft jobs and
+  worker-written drafts. The API limits enqueues to managers, 20 per workspace
+  per 24 hours, and 5 simultaneous pending jobs. The worker has read access
+  only to selected contact fields (no email addresses); it can generate
+  drafts but has no email sending or mailbox permissions.
+- The credentials API encrypts API keys using a server-supplied Fernet
+  keyring, supports encryption-key rotation, and never returns ciphertext or
+  plaintext to browser code. The API database role cannot read ciphertext.
+- The Groq adapter has a fixed official endpoint and an allowlisted model,
+  bounded timeouts/tokens, sanitized errors, and no externally supplied URL.
+  The pasted key in the owner conversation must be revoked; do not place it
+  into Modal secrets or code. Only a freshly rotated key is acceptable.
+- Unit suite: **40 hosted tests passed**, including key rotation, malicious
+  ciphertext, tenant denial, consent enforcement, idempotent draft scheduling,
+  and mock Groq provider failure paths. No real provider call was made.
+- On Neon temporary child branch `br-blue-hall-ao5fb5n8`, migration 0006 was
+  prepared successfully and migration 0007 applied transactionally for tests.
+  Actual API and worker role SQL confirmed: API cannot SELECT ciphertext;
+  worker cannot SELECT contact email; cross-tenant API draft read returns zero;
+  worker can insert drafts with matching workspace/job foreign keys.
+- **Neither migration has been promoted to the active staging database.** A
+  targeted approval is required to complete the prepared migration, after
+  which the second migration and end-to-end staging tests must follow. The
+  hosted AI flag stays off, and no key has been installed. Do not deploy code
+  with new API endpoints before its schema is present.
+- Gmail mailbox OAuth has not been configured. Use the narrow Gmail `gmail.send`
+  scope and complete Google's sensitive-scope verification where required.
+  Do not collect Gmail refresh tokens before the consent screen, redirect URI,
+  ownership, encrypted token storage, revocation, and unsubscribe handling
+  are implemented and tested.
+
 ## Subsequent security and renewal work — deployed to Modal staging
 
 - Hardened the Razorpay webhook request path with bounded streaming before
