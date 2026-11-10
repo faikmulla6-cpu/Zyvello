@@ -2,7 +2,7 @@
 
 Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOMERS**.
 
-## Subsequent draft/consent foundation — code reviewed, not yet promoted
+## Draft/consent foundation — deployed to private staging (AI and sends disabled)
 
 - Added migration 0006 for encrypted per-workspace Groq credentials and an
   append-only contact permission ledger. Imported contacts start with
@@ -28,16 +28,23 @@ Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOME
   Actual API and worker role SQL confirmed: API cannot SELECT ciphertext;
   worker cannot SELECT contact email; cross-tenant API draft read returns zero;
   worker can insert drafts with matching workspace/job foreign keys.
-- **Neither migration has been promoted to the active staging database.** A
-  targeted approval is required to complete the prepared migration, after
-  which the second migration and end-to-end staging tests must follow. The
-  hosted AI flag stays off, and no key has been installed. Do not deploy code
-  with new API endpoints before its schema is present.
-- Gmail mailbox OAuth has not been configured. Use the narrow Gmail `gmail.send`
-  scope and complete Google's sensitive-scope verification where required.
-  Do not collect Gmail refresh tokens before the consent screen, redirect URI,
-  ownership, encrypted token storage, revocation, and unsubscribe handling
-  are implemented and tested.
+- **Both migrations are now on the active Zyvello staging database** after
+  explicit approval. Before promotion, a Neon snapshot
+  `snap-withered-pond-ao17zdul` was created from branch
+  `br-ancient-credit-aownmkn7`. Active migration version is 7, the API role
+  cannot SELECT secret ciphertext, the worker cannot SELECT contact emails,
+  and the billing role cannot SELECT generated drafts. Modal staging was
+  redeployed with the dedicated `zyvello` profile and all six read-only
+  smoke checks passed again. No key was installed and AI remains off.
+- Created separate Google Cloud project `zyvello-outreach` for Zyvello,
+  enabled Gmail API, and created External OAuth branding in **Testing** mode.
+  Only the sensitive `gmail.send` permission is configured; the authorized
+  domain and homepage are `zyvello.pro`. Temporary consent support/developer
+  contact is `faikmulla74@gmail.com` with the owner's explicit approval.
+  **No OAuth client/secret, refresh token, customer consent, or email send
+  exists yet.** Public OAuth requires working privacy/terms pages, domain
+  verification, a secure callback/token store, and Google's review where
+  required.
 
 ## Subsequent security and renewal work — deployed to Modal staging
 
