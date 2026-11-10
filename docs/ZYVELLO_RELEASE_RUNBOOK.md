@@ -6,9 +6,9 @@ Owner: Faik. Updated: 10 November 2026. Branch: `hosted-saas-foundation` (draft 
 ## Current verified baseline
 
 - Windows isolated full pytest: **1,541 passed, 184 skipped, 0 failed** on 10 Nov 2026; dependency deprecations remain.
-- Read-only deployed Modal smoke: six checks passed against the existing staging app, including 401 without auth, safe headers, disabled AI/sending/payments, and `/readyz` 503.
-- Neon new migrations 0006/0007 tested with synthetic tenants and restricted roles **on a temporary child branch only**. The active staging database has not received them.
-- No real Groq request, Gmail OAuth, mail send, recovery-email receipt, or scheduled Razorpay renewal has been evidenced.
+- Read-only deployed Modal smoke: **seven checks passed** after the hosted UI rebuild, including 401 without auth, safe headers, disabled AI/sending/payments, and `/readyz` 503. A new check rejects a legacy single-owner frontend bundle.
+- Neon migrations 0006/0007 were tested on a child branch, then **applied to active Zyvello staging after approval**. Snapshot `snap-withered-pond-ao17zdul` preceded the update; active schema version is 7 with restricted-role verification.
+- Zyvello-only Google project `zyvello-outreach` has Gmail API enabled and External OAuth branding in Testing with only `gmail.send`. No OAuth client, refresh token, real Groq request, mail send, recovery-email receipt, or scheduled Razorpay renewal has been evidenced.
 - Hostinger `zyvello.pro` is not part of this private-branch deployment. Original desktop working tree contains owner changes; preserve those changes.
 
 ## Release sequencing (must not skip)
@@ -29,7 +29,8 @@ Owner: Faik. Updated: 10 November 2026. Branch: `hosted-saas-foundation` (draft 
 From a **clean** Zyvello repository checkout with the project's dedicated Modal credentials:
 
 - Local test: `.venv-test/Scripts/python.exe -m pytest -q --basetemp=pytest-ops-20261110` on Windows, or an equivalent isolated virtual environment.
-- Read-only deployed smoke: `python hosted/ci/smoke_staging.py`.
+- Build the **hosted** staging frontend before deploying Modal. In PowerShell from `frontend/`, set `VITE_ZYVELLO_HOSTED_MODE=true`, `VITE_ZYVELLO_ENABLE_SIGNUP=false`, and `VITE_NEON_AUTH_URL` to the *public staging* Neon Auth URL, then execute `npm.cmd ci` and `npm.cmd run build:app`. A default build without these variables ships the wrong single-owner login UI; this failure was observed and corrected on 10 Nov.
+- Read-only deployed smoke: `python hosted/ci/smoke_staging.py`, which checks the hosted login JS bundle as well as six API/feature-gate responses. Also inspect `/login`, `/signup`, and unauthenticated `/app` in a browser.
 - Review the current revision: `git diff --check`, `git status --short`, and `git log -1 --oneline`.
 - Inspect the active Neon branch, migration table, role grants, and secret names **without printing secret values**.
 - Deploy to staging only after both schema versions and the role/API checks pass; never blindly redeploy the current branch to a database missing 0006 or 0007.
@@ -46,8 +47,8 @@ From a **clean** Zyvello repository checkout with the project's dedicated Modal 
 
 ## Approvals still required
 
-- Targeted Neon staging migration promotion (0006 then 0007).
-- Separate Google Cloud Zyvello project and Gmail API OAuth configuration; avoid changing ClipKaro's project.
+- **Already approved and completed:** active Neon staging migrations 0006/0007 (after snapshot) and separate Google Cloud project + Gmail API + Testing-mode OAuth consent.
+- Still pending: verified privacy/terms pages and a secure callback/token store before creating a Gmail OAuth client, consenting test users, or requesting broader permissions. Do not enable real sending yet.
 - Verified custom SMTP credentials and domain DNS sender authentication (SPF/DKIM/DMARC).
 - Actual rotated provider API credentials, stored server-side only.
 - Final live payment and public customer cutover approval.

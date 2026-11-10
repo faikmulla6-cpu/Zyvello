@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -37,6 +38,17 @@ def get(path: str) -> tuple[int, dict, dict]:
     return status, headers, body
 
 
+def get_text(path: str) -> tuple[int, str]:
+    """Fetch only public HTML/JS bytes for deployment-mode verification."""
+    req = Request(BASE + path, headers={"Accept": "text/html,*/*"})
+    try:
+        response = urlopen(req, timeout=25)
+    except HTTPError as error:
+        response = error
+    with response:
+        return response.status, response.read(131072).decode("utf-8", errors="replace")
+
+
 def check(name: str, condition: bool) -> None:
     print(f'{"PASS" if condition else "FAIL"} {name}')
     if not condition:
@@ -58,6 +70,14 @@ def main() -> int:
             caps.get("outbound_sending_enabled") is False
             and caps.get("payments_enabled") is False
             and caps.get("ai_enabled") is False,
+        )
+        login_code, login_html = get_text("/login")
+        entry = re.search(r'src="(/static/landing/assets/index-[^"]+\.js)"', login_html)
+        bundle_code, bundle_js = get_text(entry.group(1)) if entry else (0, "")
+        check(
+            "hosted login bundle active (not legacy single-owner auth)",
+            login_code == 200 and entry is not None
+            and bundle_code == 200 and "HostedAuthPage" in bundle_js,
         )
         code, _, body = get("/readyz")
         check("public readiness intentionally gated", code == 503 and body.get("status") == "not_ready")

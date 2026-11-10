@@ -96,6 +96,8 @@ Status: **private Modal staging only / NOT APPROVED FOR LIVE PAYMENTS OR CUSTOME
 - Staging webhook rejects unsigned POST with HTTP 400. API unit tests cover HMAC tampering, replay of the same event ID, malformed event ID, payload size limit, and failed/uncaptured payment payloads.
 - Hosted-focused Python suite: **25 passing tests** on local and Windows staging clone. React/TypeScript/Vite hosted build: **passed**.
 - Billing now offers a manual refresh and briefly polls for signed webhook settlement after checkout, instead of showing stale entitlements indefinitely.
+- **Newly found and fixed staging build regression (10 Nov):** `/login` initially loaded the local-owner form and failed `/api/auth/session` because the compiled frontend lacked hosted-mode environment variables. Rebuilt with hosted mode true, the public staging Neon Auth URL, and public signup false, then redeployed to Modal. Browser now shows working hosted private-beta login controls, invitation-only signup, and denied anonymous `/app`; the enhanced **seven-check** smoke suite passes. Actual login and email delivery are still unverified.
+- Frontend `npm audit --omit=dev`: zero reported production-dependency advisories. The isolated *development/test* Python environment audit flagged `pip` and `pytest` packages (tooling, not production app packages); no known issue was reported for app Python packages scanned. A targeted tracked-file scan found no high-confidence literal Groq/Razorpay live keys. These checks do not replace credential rotation or a complete security review.
 
 ## Explicitly not yet verified or not ready
 
