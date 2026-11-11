@@ -23,7 +23,7 @@ have not been proven. It supplements `ZYVELLO_RELEASE_RUNBOOK.md`.
 | Live readiness gate | `/readyz` returns `not_ready`, citing disabled outreach/scheduled recovery | Intentional; not a platform outage |
 | Neon backup inventory | One manual pre-migration snapshot (`zyvello-pre-0006-0007-20261110`); active branch automatic snapshot schedule is empty; project subscription is `free_v3` | A current v7 snapshot and a successful isolated restore are **not** evidenced; scheduled Neon snapshots are unavailable on Free |
 | Neon Auth config | Custom Resend SMTP, public signup disabled, reset-session revocation configured; trusted origins only include Modal staging, `allow_localhost=true` | Staging configuration, not final production-origin hardening |
-| GitHub Actions | Most recent tracked PR workflows concluded `failure`; jobs have no steps and no logs | CI has not executed checks; cause requires repository/Actions billing or policy investigation |
+| GitHub Actions | At draft branch commit `07252fd`, both `hosted-staging-checks` and `tests` completed successfully: three hosted jobs and all six OS/Python matrix jobs green | **CI execution blocker closed**. This does not prove live provider or auth-session flows |
 
 ## Previously verified 11 November by authenticated staging checks
 
@@ -72,24 +72,22 @@ on leaks or unexpected response codes.
    after password reset; verify trusted origins and rate limits for the final
    customer domain. Current staging `allow_localhost` must not leak to
    production.
-2. **CI:** restore execution of GitHub Actions jobs; successful local tests
-   do not substitute for required protected-branch checks.
-3. **Credentials/AI:** revoke the previously shared Groq key, install only a
+2. **Credentials/AI:** revoke the previously shared Groq key, install only a
    rotated scoped key in a server-side secret, test encrypted storage, bounded
    genuine generation, throttling, timeouts and queue recovery. Keep AI off
    until a production-reviewed change.
-4. **Gmail/OAuth/sending:** privacy and terms pages, verified domain and
+3. **Gmail/OAuth/sending:** privacy and terms pages, verified domain and
    authorized redirects, token storage/revocation, mailbox-scoped permission,
    unsubscribe and suppression, quotas and a controlled end-to-end test.
    No live outreach to third parties during this gate.
-5. **Payments:** actual Razorpay Test Mode second-cycle renewal and failure
+4. **Payments:** actual Razorpay Test Mode second-cycle renewal and failure
    paths; replay/out-of-order handling on the deployed ledger; agreed
    cancellation, refund, dispute, tax/invoice and support policies. Never
    insert live keys or enable live charges as an unreviewed trial.
-6. **Operations:** prove Neon backup **restore**, rollback rehearsal, alert
+5. **Operations:** prove Neon backup **restore**, rollback rehearsal, alert
    delivery, compute/billing budget guardrails, retention/erasure workflow,
    incident response ownership and support contact.
-7. **Final rollout:** recheck frontend's real Hosted Auth base URL and
+6. **Final rollout:** recheck frontend's real Hosted Auth base URL and
    production CORS/trusted-origin configuration; controlled DNS/Hostinger
    cutover; public signup, AI, sends and money only as separately approved.
 
