@@ -21,7 +21,7 @@ have not been proven. It supplements `ZYVELLO_RELEASE_RUNBOOK.md`.
 | Modal staging live UI/API | `/healthz` reports alive; `/login` displays hosted private-beta email OTP, password and recovery choices | Does not prove that accounts can still log in today |
 | Live capability gate | `ai_enabled=false`, `outbound_sending_enabled=false`, `payments_enabled=false`, `razorpay_test_billing_ready=true` | Test billing may be configured, but production charging is off |
 | Live readiness gate | `/readyz` returns `not_ready`, citing disabled outreach/scheduled recovery | Intentional; not a platform outage |
-| Neon backup inventory | One manual pre-migration snapshot (`zyvello-pre-0006-0007-20261110`); active branch automatic snapshot schedule is empty | A current v7 snapshot and a successful isolated restore are **not** evidenced |
+| Neon backup inventory | One manual pre-migration snapshot (`zyvello-pre-0006-0007-20261110`); active branch automatic snapshot schedule is empty; project subscription is `free_v3` | A current v7 snapshot and a successful isolated restore are **not** evidenced; scheduled Neon snapshots are unavailable on Free |
 | Neon Auth config | Custom Resend SMTP, public signup disabled, reset-session revocation configured; trusted origins only include Modal staging, `allow_localhost=true` | Staging configuration, not final production-origin hardening |
 | GitHub Actions | Most recent tracked PR workflows concluded `failure`; jobs have no steps and no logs | CI has not executed checks; cause requires repository/Actions billing or policy investigation |
 
@@ -100,3 +100,14 @@ staging period after discussing an earlier desire to make it private. Do not
 silently change repository visibility or claim it was made private. Obtain a
 fresh explicit preference before any change. Never add API secrets, JWTs or
 SMTP credentials to this public repo.
+
+### Low-cost backup decision
+
+Neon's 4 November 2026 [plan documentation](https://neon.com/docs/introduction/plans#snapshots)
+states that Free includes one **manual** snapshot and does not support
+automated scheduled snapshots. This project's direct read-back confirms it is
+on Free and already has a pre-migration manual snapshot. Do **not** delete that
+snapshot or promise free automated snapshots. Before public launch choose
+either a paid Neon plan with an approved backup schedule and budget cap, or a
+separately managed encrypted database export with documented retention and a
+successful isolated restore rehearsal. Neither has been implemented yet.
