@@ -13,7 +13,7 @@ have not been proven. It supplements `ZYVELLO_RELEASE_RUNBOOK.md`.
 
 | Area | Observation | Meaning / limit |
 | --- | --- | --- |
-| Python regression | **1,708 passed, 25 skipped, 0 failed** in an isolated Linux Python environment after excluding injected SOCKS-proxy environment variables | Local suite including the new smoke tests passed; 25 skipped tests and hosted CI are not green checks |
+| Python regression | **1,716 passed, 26 skipped, 0 failed** in an isolated Linux Python environment after excluding injected SOCKS-proxy environment variables | Full suite includes new backup guards; one additional skip is the unavailable GPG-agent integration test. Skips are not passes |
 | Hosted unit tests | 25 passed | Synthetic auth/storage/API contracts, not real bearer sessions |
 | Two-account smoke tool | 8 local regression tests passed, including cross-tenant leak rejection and no redirect to unknown hosts | Real staging JWT replay/tampering remains pending |
 | Frontend | Hosted-mode production TypeScript/Vite build passed with non-production placeholder Auth URL; built assets were not promoted | Deployment must be rebuilt with the actual approved public Auth URL before any publish |
@@ -108,4 +108,27 @@ on Free and already has a pre-migration manual snapshot. Do **not** delete that
 snapshot or promise free automated snapshots. Before public launch choose
 either a paid Neon plan with an approved backup schedule and budget cap, or a
 separately managed encrypted database export with documented retention and a
-successful isolated restore rehearsal. Neither has been implemented yet.
+successful isolated restore rehearsal. The owner chose the **free-first export**
+route; the live archive rehearsal still has to pass.
+
+### Free-first backup progress later on 11 November
+
+Faik selected the independent encrypted-export strategy. One **actual Neon
+snapshot recovery** was rehearsed safely: snapshot
+`snap-withered-pond-ao17zdul` restored into the *new*, non-default branch
+`br-delicate-mountain-aozmffsu`, with no production swap. Read-only SQL
+confirmed that the restored data is schema **v5** (one workspace and one
+contact; permission ledger absent), while the active branch remains schema
+**v7** (two workspaces and one contact; permission ledger present). The
+restored branch remains allocated and requires a separate deletion decision.
+
+A cross-platform `pg_dump` → GPG-recipient-encrypted archive and loopback-only
+`pg_restore` workflow has been prepared at `hosted/backup/secure_dump.py`, with
+setup and retention constraints in `hosted/backup/README.md`. Its subprocess
+transport was tested using synthetic fixtures, **not real customer data**.
+The current execution container has no `pg_dump`, local PostgreSQL server,
+or working GPG key agent. The **full local regression after the backup changes
+passed 1,716 tests, with 26 skipped**, including the GPG integration skip.
+A real encrypted export and local archive restore remain pending. Neon snapshot
+restoration does not close this separate off-platform recovery gate. No secret
+or backup archive was committed.
