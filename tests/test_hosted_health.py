@@ -40,6 +40,27 @@ class HostedHealthTests(unittest.TestCase):
             self.assertEqual(client.get("/static/favicon.svg").status_code, 200)
             self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
+    def test_only_the_private_beta_preview_can_call_the_api_from_a_browser(self):
+        headers = {
+            "Origin": "https://peachpuff-curlew-471332.hostingersite.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        }
+        allowed = self.client.options("/api/v1/workspaces", headers=headers)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(
+            allowed.headers["access-control-allow-origin"],
+            "https://peachpuff-curlew-471332.hostingersite.com",
+        )
+        self.assertNotIn("access-control-allow-credentials", allowed.headers)
+
+        blocked = self.client.options(
+            "/api/v1/workspaces",
+            headers={**headers, "Origin": "https://untrusted.example"},
+        )
+        self.assertEqual(blocked.status_code, 400)
+        self.assertNotIn("access-control-allow-origin", blocked.headers)
+
     def test_auth_and_api_responses_have_private_cache_and_browser_defenses(self):
         for path in ("/api/v1/me", "/api/v1/capabilities", "/api/v1/workspaces"):
             with self.subTest(path=path):

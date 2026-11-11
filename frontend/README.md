@@ -36,7 +36,12 @@ landing page without Node.js.
 For Hostinger static publishing, keep root `frontend`, build command `npm run build`,
 and output directory `dist`. The standalone build uses root-relative asset URLs
 and copies public branding assets. Python APIs and automation require a separate
-backend; this static build does not provide those services.
+backend; this static build does not provide those services. Hosted private-beta
+builds use `npm run build:hosted` and require all four public settings from
+`.env.hosted.example`, including `VITE_ZYVELLO_API_URL` pointing to the
+isolated Modal staging API. Do not put a database connection string or provider
+secret in a `VITE_` variable. Server-side CORS must allow the preview origin;
+JWT and workspace role checks remain mandatory for every API request.
 
 ## Components and styles
 

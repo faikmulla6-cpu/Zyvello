@@ -117,7 +117,10 @@ def create_app(
                          else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["https://zyvello--zyvello-staging-web.us-east.modal.run"],
+        allow_origins=[
+            "https://zyvello--zyvello-staging-web.us-east.modal.run",
+            "https://peachpuff-curlew-471332.hostingersite.com",
+        ],
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
         allow_credentials=False,

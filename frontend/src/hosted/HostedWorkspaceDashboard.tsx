@@ -46,6 +46,22 @@ function loadCheckoutScript(): Promise<void> {
   });
 }
 
+function hostedApiUrl(path: string): string {
+  const raw = import.meta.env.VITE_ZYVELLO_API_URL;
+  if (typeof raw !== "string") throw new Error("The hosted workspace API is not configured.");
+  let base: URL;
+  try {
+    base = new URL(raw);
+  } catch {
+    throw new Error("The hosted workspace API URL is invalid.");
+  }
+  if (base.protocol !== "https:" || !base.hostname || base.username || base.password ||
+      base.search || base.hash || base.pathname !== "/" || !path.startsWith("/api/v1/")) {
+    throw new Error("The hosted workspace API URL is not allowed.");
+  }
+  return new URL(path, base).toString();
+}
+
 async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   if (!authClient) throw new Error("Authentication is unavailable");
   // Neon Auth's Better Auth adapter exposes the signed token on its session.
@@ -55,8 +71,10 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   if (!token) {
     throw new Error("Your session could not be verified. Please sign in again.");
   }
-  const response = await fetch(path, {
+  const response = await fetch(hostedApiUrl(path), {
     ...init,
+    credentials: "omit",
+    redirect: "error",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,

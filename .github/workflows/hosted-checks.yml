@@ -47,6 +47,13 @@ jobs:
           VITE_ZYVELLO_ENABLE_SIGNUP: "false"
           VITE_NEON_AUTH_URL: https://identity.example.test/neondb/auth
         run: npm run build:app
+      - name: Validate isolated Hostinger private-beta build
+        env:
+          VITE_ZYVELLO_HOSTED_MODE: "true"
+          VITE_ZYVELLO_ENABLE_SIGNUP: "false"
+          VITE_NEON_AUTH_URL: https://staging-auth.neon.tech/neondb/auth
+          VITE_ZYVELLO_API_URL: https://staging-api.us-east.modal.run
+        run: npm run build:hosted
 
   postgres-rls-tests:
     runs-on: ubuntu-latest
