@@ -177,8 +177,8 @@ def restore_rehearsal(archive: Path, target_url: str, *, environment: dict | Non
 
     decrypt_env = _unprivileged_env(environment)
     preflight = subprocess.run(
-        [*gpg_command, "--batch", "--no-tty", "--decrypt", "--output", os.devnull,
-         str(source)], env=decrypt_env, stdout=subprocess.DEVNULL,
+        [*gpg_command, "--batch", "--no-tty", "--decrypt", str(source)],
+        env=decrypt_env, stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, check=False,
     )
     if preflight.returncode != 0:
