@@ -440,7 +440,11 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
           <p className="mt-3 text-xs text-gray-400">Workspace slug: {selected?.slug}</p>
         </section>}
 
-        {workspaces.length === 0 && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
+        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES !== "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
+          <h2 className="text-xl font-semibold">Workspace access pending</h2>
+          <p className="mt-2 text-sm text-gray-300">Zyvello is currently invitation-only. Your email is verified, but you have not been granted an agency workspace. Contact the Zyvello team for an invitation. No customer data is available to this account.</p>
+        </section>}
+        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES === "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
           <h2 className="text-xl font-semibold">Create your first agency workspace</h2>
           <p className="mt-2 text-sm text-gray-300">Your customers and future campaign records will belong to this workspace.</p>
           <form onSubmit={event => void createWorkspace(event)} className="mt-6 space-y-4">

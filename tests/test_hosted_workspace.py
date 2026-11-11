@@ -111,7 +111,8 @@ class HostedWorkspaceApiTests(unittest.TestCase):
             self.dispatch_count += 1
 
         self.client = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
-                                            store_override=self.store, dispatch_job=dispatch))
+                                            store_override=self.store, dispatch_job=dispatch,
+                                            allow_workspace_creation_override=True))
 
     @staticmethod
     def token(value):
@@ -149,6 +150,16 @@ class HostedWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(okay.json()["workspace"]["slug"], "new-agency")
         self.assertEqual(len(self.store.by_owner["test-auth-a"]), 2)
         self.assertEqual(len(self.store.by_owner["test-auth-b"]), 1)
+
+    def test_closed_beta_rejects_new_workspace_even_with_verified_jwt(self):
+        locked = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
+                                       store_override=self.store,
+                                       allow_workspace_creation_override=False))
+        response = locked.post("/api/v1/workspaces", headers=self.token("good-b"),
+                               json={"slug": "fresh-new-agency", "name": "Uninvited agency"})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(self.store.by_owner["test-auth-b"]), 1)
+        self.assertEqual(locked.get("/api/v1/workspaces", headers=self.token("good-a")).status_code, 200)
 
     def test_health_job_is_idempotent_and_only_in_own_workspace(self):
         path = f"/api/v1/workspaces/{WORKSPACE_A}/jobs"

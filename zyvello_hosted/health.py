@@ -97,6 +97,7 @@ def create_app(
     billing_gateway_override: RazorpayGateway | None = None,
     credential_vault_override: CredentialVault | None = None,
     enable_ai_drafts_override: bool | None = None,
+    allow_workspace_creation_override: bool | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Zyvello staging workspace API",
@@ -115,6 +116,9 @@ def create_app(
         credential_vault = CredentialVault(os.environ["ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"])
     ai_drafts_enabled = (enable_ai_drafts_override if enable_ai_drafts_override is not None
                          else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
+    # Closed private beta: no self-provisioning from a merely valid OTP identity.
+    allow_workspace_creation = (allow_workspace_creation_override if allow_workspace_creation_override is not None
+                                else os.getenv("ZYVELLO_ENABLE_NEW_WORKSPACES", "false").lower() == "true")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -201,6 +205,8 @@ def create_app(
 
     @app.post("/api/v1/workspaces", status_code=201)
     async def create_workspace(body: CreateWorkspaceRequest, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        if not allow_workspace_creation:
+            raise HTTPException(403, "New workspaces require a private-beta invitation")
         row = await store_call(db.create_workspace, identity.user_id, name=body.name, slug=body.slug)
         return {"workspace": serialize_row(row)}
 
