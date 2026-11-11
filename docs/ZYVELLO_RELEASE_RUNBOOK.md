@@ -52,3 +52,12 @@ From a **clean** Zyvello repository checkout with the project's dedicated Modal 
 - Verified custom SMTP credentials and domain DNS sender authentication (SPF/DKIM/DMARC).
 - Actual rotated provider API credentials, stored server-side only.
 - Final live payment and public customer cutover approval.
+
+## 11 November verification addendum
+
+Read `ZYVELLO_PRODUCTION_GATES_2026-11-11.md` for the current evidence ledger
+and outstanding customer-release blockers. A new read-only two-user JWT smoke
+is available at `hosted/ci/smoke_tenant_authorization.py`; its isolated unit
+tests passed, but **real staging bearer-token execution is still pending**.
+Do not infer authorization success solely from synthetic tests or database RLS
+queries. `/readyz` intentionally stays at 503 until all launch gates close.

@@ -1,6 +1,13 @@
 # Zyvello hosted SaaS — staging runbook and launch gates
 
-Status: **private staging deployed, not customer-production-ready** (2026-11-10).
+Status: **private-beta staging deployed, not customer-production-ready** (2026-11-11).
+
+**Current gate ledger:** see
+[`../docs/ZYVELLO_PRODUCTION_GATES_2026-11-11.md`](../docs/ZYVELLO_PRODUCTION_GATES_2026-11-11.md).
+Some below sections document the earlier 9–10 November rollout incrementally;
+their older pending-key and migration-version statements are historical, not
+the latest staging configuration. Do not use them as evidence that a gate has
+passed today.
 
 The original single-owner Harvey CLI/dashboard, SQLite state, prospecting,
 provider integrations and Groq/Claude/Codex code remain in the repository.
@@ -59,6 +66,16 @@ at the ClipKaro database or live Hostinger database:
    strict RLS. API owners can create intents but cannot assign entitlements.
    Only reconciled signed captured-payment events with matching amount and
    provider plan can advance `paid_through`.
+6. `0006_provider_secrets_and_consent.sql`: Fernet-encrypted workspace-scoped
+   provider key storage, API/worker ciphertext isolation, and append-only
+   contact permission ledger (claimed consent never enables sending).
+7. `0007_groq_draft_jobs.sql`: bounded, idempotent review-only AI draft queue
+   and draft storage with separate worker permissions; no email send path.
+
+Migrations 0006 and 0007 were applied to the active Zyvello **staging** branch
+after an isolated-branch test and a Neon snapshot on 10 November; current
+schema version was verified as **7**. See the dated launch-readiness report
+for role-grant and rollback evidence. Never replay these migrations blindly.
 
 Roles `zyvello_api_staging`, `zyvello_worker_staging`, and
 `zyvello_billing_staging` must be **non-owner**
