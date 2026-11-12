@@ -22,7 +22,8 @@ class BillingApiStore(HostedStore):
             cursor.execute("""
                 SELECT id, plan_code, status, provider_subscription_id,
                        checkout_verified, paid_through, paid_count, created_at,
-                       (status='active' AND paid_through>now() AND paid_count>0 AND checkout_verified) AS entitled
+                       (status='active' AND paid_through>now() AND paid_count>0
+                        AND checkout_verified AND provider_subscription_id IS NOT NULL) AS entitled
                 FROM zyvello.billing_subscriptions WHERE workspace_id=%s
                 ORDER BY created_at DESC LIMIT 10
             """, (workspace_id,))
@@ -53,7 +54,7 @@ class BillingApiStore(HostedStore):
                 return {**previous, "created": False}
             cursor.execute("""
                 SELECT 1 FROM zyvello.billing_subscriptions WHERE workspace_id=%s
-                  AND status IN ('creating','created','authenticated','active','pending','paused')
+                  AND status IN ('creating','created','authenticated','active','pending','paused','halted')
                 LIMIT 1
             """, (workspace_id,))
             if cursor.fetchone():
