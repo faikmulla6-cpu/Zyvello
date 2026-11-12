@@ -15,7 +15,10 @@ type Job = {
   last_error: string | null;
   created_at: string;
 };
-type BillingPlan = { code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number };
+type BillingPlan = {
+  code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number;
+  taxes: "additional_if_applicable"; test_checkout_available: boolean; live_checkout_available: boolean;
+};
 type BillingSubscription = {
   id: string; plan_code: string; status: string; checkout_verified: boolean;
   paid_through: string | null; paid_count: number; entitled: boolean;
@@ -141,7 +144,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   }
 
   async function tryCheckout(plan: BillingPlan) {
-    if (!owner || !enabled || busyPlan) return;
+    if (!owner || !enabled || busyPlan || !plan.test_checkout_available) return;
     setBusyPlan(plan.code);
     setFeedback("");
     setBillingError("");
@@ -266,12 +269,14 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
         {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
           {plans.map(plan => <div className="rounded-2xl border border-white/15 bg-black/20 p-4" key={plan.code}>
             <p className="font-medium">{plan.name}</p>
-            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ {plan.interval} {plan.period}</span></p>
+            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ month, plus applicable taxes</span></p>
+            {!plan.test_checkout_available && <p className="mt-2 text-xs text-amber-200">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
             <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-40" type="button"
-              disabled={!owner || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
-              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : "Try test checkout"}</button>
+              disabled={!owner || !plan.test_checkout_available || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
+              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>
           </div>)}
         </div>}
+        <p className="mt-4 text-sm text-gray-300"><strong>AI Employee</strong> — planned from ₹9,999/month. Not available for purchase; autonomous delivery is not released.</p>
         {!owner && <p className="mt-3 text-xs text-gray-400">Only the workspace owner can manage billing.</p>}
       </>}
       {feedback && <p role="status" className="mt-4 text-xs text-emerald-200">{feedback}</p>}
