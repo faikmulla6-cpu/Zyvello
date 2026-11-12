@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
 from .credentials import CredentialConfigurationError, CredentialVault
 from .billing_store import BillingApiStore, BillingWebhookStore
+from .billing_catalog import APPROVED_MONTHLY_TIERS, FUTURE_AI_EMPLOYEE, approved_test_plan, public_monthly_catalog
 from .razorpay_billing import (MAX_WEBHOOK_BODY_BYTES, BillingRejected, BillingSettings,
                                BillingUnavailable, RazorpayGateway, parse_verified_webhook,
                                verify_checkout_signature, verify_webhook_signature)
@@ -493,6 +494,17 @@ def create_app(
                 pass
         return {"job": serialize_row(row), "dispatch_requested": dispatch_requested}
 
+    @app.get("/api/v1/pricing")
+    async def approved_pricing():
+        # Public approved catalog, not an authorization or checkout endpoint.
+        # This is deliberately independent of whether provider IDs exist.
+        return {
+            "currency": "INR", "billing_cycle": "monthly",
+            "taxes": "additional_if_applicable", "live_payments_enabled": False,
+            "plans": public_monthly_catalog(),
+            "future_tiers": [FUTURE_AI_EMPLOYEE],
+        }
+
     @app.get("/api/v1/workspaces/{workspace_id}/billing")
     async def billing_status(workspace_id: UUID, identity=Depends(verified_identity),
                              billing: tuple = Depends(ready_billing)):
@@ -506,15 +518,20 @@ def create_app(
         api, _ = billing
         # Membership is resolved by RLS for the provided verified identity.
         await store_call(api.list_subscriptions, identity.user_id, workspace_id)
-        return {"mode": "test", "plans": [plan.public() for plan in billing_settings.plans.values()]}
+        # Never advertise historic TEST plans at an unapproved amount.
+        # Missing/mismatched provider IDs leave the approved tier visible
+        # but its checkout button explicitly disabled.
+        return {"mode": "test", "plans": public_monthly_catalog(billing_settings.plans)}
 
     @app.post("/api/v1/workspaces/{workspace_id}/billing/subscriptions", status_code=201)
     async def create_billing_subscription(workspace_id: UUID, body: CreateSubscriptionRequest,
                                           identity=Depends(verified_identity), billing: tuple = Depends(ready_billing)):
         api, gateway = billing
+        if body.plan_code not in APPROVED_MONTHLY_TIERS:
+            raise HTTPException(422, "Unknown or unavailable billing plan")
         plan = billing_settings.plans.get(body.plan_code)
-        if plan is None:
-            raise HTTPException(422, "Unknown billing plan")
+        if not approved_test_plan(plan, body.plan_code):
+            raise HTTPException(409, "Approved TEST plan is not configured at the exact INR price")
         reservation = await store_call(api.reserve_subscription, identity.user_id, workspace_id,
                                        plan=plan, idempotency_key=body.idempotency_key)
         provider_id = reservation.get("provider_subscription_id")

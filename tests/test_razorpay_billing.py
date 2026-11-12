@@ -35,14 +35,14 @@ def settings():
         "ZYVELLO_RAZORPAY_KEY_SECRET": "test_api_secret_fixture",
         "ZYVELLO_RAZORPAY_WEBHOOK_SECRET": "test_webhook_secret_fixture",
         "ZYVELLO_RAZORPAY_PLANS_JSON": json.dumps({"starter": {
-            "name": "Starter monthly", "amount_paise": 9900,
+            "name": "Starter monthly", "amount_paise": 49900,
             "razorpay_plan_id": PLAN_ID, "period": "monthly", "interval": 1,
             "total_count": 12,
         }}),
     })
 
 
-def event_body(event_type="subscription.charged", *, payment_status="captured", amount=9900):
+def event_body(event_type="subscription.charged", *, payment_status="captured", amount=49900):
     payload = {
         "event": event_type,
         "created_at": 1794340000,
@@ -66,7 +66,7 @@ class RazorpayCryptoTests(unittest.TestCase):
                "ZYVELLO_RAZORPAY_PLANS_JSON": "{}"}
         self.assertFalse(BillingSettings.from_env(bad).enabled)
         self.assertTrue(settings().enabled)
-        self.assertEqual(settings().plans["starter"].amount_paise, 9900)
+        self.assertEqual(settings().plans["starter"].amount_paise, 49900)
 
     def test_checkout_uses_payment_id_then_server_subscription_id(self):
         digest = hmac.new(settings().key_secret.encode(), f"{PAY_ID}|{SUB_ID}".encode(), hashlib.sha256).hexdigest()
@@ -89,7 +89,7 @@ class RazorpayCryptoTests(unittest.TestCase):
                                      webhook_secret=settings().webhook_secret)
         event = parse_verified_webhook(body, "evt_12345678901")
         self.assertTrue(event["captured"])
-        self.assertEqual(event["amount_paise"], 9900)
+        self.assertEqual(event["amount_paise"], 49900)
         self.assertNotIn("raw_body", event)
         self.assertFalse(parse_verified_webhook(event_body(payment_status="authorized"), "evt_12345678902")["captured"])
         with self.assertRaises(BillingRejected):
@@ -120,7 +120,7 @@ class RazorpayCryptoTests(unittest.TestCase):
 
     def test_gateway_checks_remote_plan_price_before_creating_subscription(self):
         gateway = RazorpayGateway(settings())
-        responses = [{"id": PLAN_ID, "item": {"amount": 9900, "currency": "INR"},
+        responses = [{"id": PLAN_ID, "item": {"amount": 49900, "currency": "INR"},
                       "period": "monthly", "interval": 1},
                      {"id": SUB_ID, "plan_id": PLAN_ID, "status": "created"}]
         with patch.object(gateway, "_request", side_effect=responses) as request:
@@ -275,7 +275,7 @@ class RazorpayApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(path, headers=self.auth()).json()["subscriptions"], [])
         plans = self.client.get(path + "/plans", headers=self.auth())
         self.assertEqual(plans.status_code, 200)
-        self.assertEqual(plans.json()["plans"][0]["amount_paise"], 9900)
+        self.assertEqual(plans.json()["plans"][0]["amount_paise"], 49900)
         self.assertNotIn("razorpay_plan_id", plans.text)
         self.assertNotIn("test_api_secret_fixture", plans.text)
         self.assertEqual(self.client.get(path + "/plans", headers=self.auth("good-b")).status_code, 404)
