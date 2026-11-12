@@ -101,6 +101,8 @@ class HostedWorkspaceApiTests(unittest.TestCase):
                 return VerifiedIdentity("test-auth-a", "a@example.test")
             if token == "good-b":
                 return VerifiedIdentity("test-auth-b", "b@example.test")
+            if token == "good-new":
+                return VerifiedIdentity("test-auth-uninvited", "uninvited@example.test")
             raise TokenRejected
 
         self.verifier_patch = patch("zyvello_hosted.health.NeonTokenVerifier", return_value=SimpleNamespace(verify=verify))
@@ -150,6 +152,18 @@ class HostedWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(okay.json()["workspace"]["slug"], "new-agency")
         self.assertEqual(len(self.store.by_owner["test-auth-a"]), 2)
         self.assertEqual(len(self.store.by_owner["test-auth-b"]), 1)
+
+    def test_uninvited_identity_cannot_create_workspace_even_if_feature_enabled(self):
+        # This is defense in depth against managed email-OTP auto-signup.
+        result = self.client.get("/api/v1/workspaces", headers=self.token("good-new"))
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["workspaces"], [])
+        blocked = self.client.post("/api/v1/workspaces", headers=self.token("good-new"),
+                                   json={"slug": "uninvited-new-agency", "name": "Uninvited agency"})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertNotIn("test-auth-uninvited", self.store.by_owner)
+        self.assertEqual(self.client.get(f"/api/v1/workspaces/{WORKSPACE_A}",
+                                         headers=self.token("good-new")).status_code, 404)
 
     def test_closed_beta_rejects_new_workspace_even_with_verified_jwt(self):
         locked = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",

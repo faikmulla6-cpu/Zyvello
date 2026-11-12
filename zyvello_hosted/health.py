@@ -207,6 +207,13 @@ def create_app(
     async def create_workspace(body: CreateWorkspaceRequest, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         if not allow_workspace_creation:
             raise HTTPException(403, "New workspaces require a private-beta invitation")
+        # The managed email-OTP provider can auto-register an identity even
+        # when email/password sign-up is off. A verified JWT is NOT an invite:
+        # the person must already belong to an approved workspace before
+        # self-provisioning another, even when the feature flag is enabled.
+        memberships = await store_call(db.list_workspaces, identity.user_id)
+        if not memberships:
+            raise HTTPException(403, "Workspace creation requires an existing approved membership")
         row = await store_call(db.create_workspace, identity.user_id, name=body.name, slug=body.slug)
         return {"workspace": serialize_row(row)}
 
