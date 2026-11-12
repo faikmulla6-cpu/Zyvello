@@ -83,6 +83,18 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         older_pending = apply(out_of_order, "subscription.pending", NOW)
         self.assertEqual(older_pending, out_of_order)
 
+    def test_stale_paid_event_does_not_override_newer_payment_failure(self):
+        first_end = NOW + timedelta(days=30)
+        active = apply(subscription(), "subscription.charged", NOW,
+                       captured=True, count=1, end=first_end)
+        pending = apply(active, "subscription.pending", NOW + timedelta(days=29))
+        self.assertEqual(pending["status"], "pending")
+        stale = apply(pending, "subscription.charged", NOW + timedelta(days=15),
+                      captured=True, count=1, end=first_end)
+        self.assertEqual(stale["status"], "pending")
+        self.assertEqual(stale["last_event_at"], pending["last_event_at"])
+        self.assertEqual(stale["paid_through"], first_end)
+
     def test_cancelled_or_expired_subscriptions_cannot_be_resurrected(self):
         for status in ("cancelled", "completed", "expired"):
             with self.subTest(status=status):

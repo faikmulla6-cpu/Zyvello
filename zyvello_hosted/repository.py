@@ -103,14 +103,10 @@ class HostedStore(WorkspaceManagementMixin):
         """
         with self.transaction(auth_user_id) as cursor:
             self._require_workspace(cursor, workspace_id)
+            # Shared with paid-feature INSERT policies in migration 0011:
+            # the HTTP gate and database can never disagree about entitlement.
             cursor.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM zyvello.billing_subscriptions
-                    WHERE workspace_id=%s AND status='active'
-                      AND paid_through > now()
-                      AND paid_count > 0
-                      AND checkout_verified = TRUE
-                ) AS entitled
+                SELECT zyvello.is_api_workspace_entitled(%s) AS entitled
             """, (workspace_id,))
             result = cursor.fetchone()
             return bool(result and result["entitled"])

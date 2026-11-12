@@ -94,6 +94,8 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   const [subscriptions, setSubscriptions] = useState<BillingSubscription[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [busyPlan, setBusyPlan] = useState("");
+  const [cancellingId, setCancellingId] = useState("");
+  const [confirmCancelId, setConfirmCancelId] = useState("");
   const [feedback, setFeedback] = useState("");
   const [billingError, setBillingError] = useState("");
   const [checkingBilling, setCheckingBilling] = useState(true);
@@ -192,6 +194,36 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
     }
   }
 
+  async function cancelRenewal(sub: BillingSubscription) {
+    if (!enabled || !owner || cancellingId || confirmCancelId !== sub.id) return;
+    setCancellingId(sub.id);
+    setBillingError("");
+    setFeedback("");
+    try {
+      const response = await requestApi<{
+        status: "already_ended" | "cancellation_requested"; at_cycle_end?: boolean;
+      }>(`/api/v1/workspaces/${workspaceId}/billing/subscriptions/${sub.id}/cancel`, {
+        method: "POST", body: JSON.stringify({}),
+      });
+      if (response.status === "already_ended") {
+        setFeedback("This test subscription has already ended.");
+      } else if (response.status === "cancellation_requested" && response.at_cycle_end === true) {
+        setFeedback("Cancellation at the billing-cycle end was requested in Razorpay TEST mode. Refresh to check its signed webhook status.");
+      } else {
+        throw new Error("The provider did not confirm the cancellation request.");
+      }
+      setConfirmCancelId("");
+      const result = await refresh();
+      setSubscriptions(result.subscriptions);
+      onEntitlementChange(result.subscriptions.some(item => item.entitled));
+    } catch (cause) {
+      // Do not automatically retry an ambiguous provider cancellation.
+      setBillingError(cause instanceof Error ? cause.message : "Cancellation was not confirmed. Please contact support.");
+    } finally {
+      setCancellingId("");
+    }
+  }
+
   return (
     <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Workspace billing">
       <div className="flex items-center justify-between gap-3">
@@ -209,7 +241,22 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
         <div className="mt-5 space-y-2">
           {subscriptions.length === 0 ? <p className="text-sm text-gray-400">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
             <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
-            {sub.paid_through && <p className="mt-1 text-xs text-gray-400">Paid through: {new Date(sub.paid_through).toLocaleDateString()}</p>}
+            {sub.paid_through && <p className="mt-1 text-xs text-gray-400">Recorded period end: {new Date(sub.paid_through).toLocaleDateString()}</p>}
+            {sub.status === "creating" && <p className="mt-2 text-xs text-amber-200">The provider response is not confirmed. Contact support before starting another checkout.</p>}
+            {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-amber-200">Payment recovery is needed. Paid tools remain locked until Razorpay confirms an active, paid period.</p>}
+            {sub.status === "active" && !sub.entitled && <p className="mt-2 text-xs text-amber-200">Payment confirmation or the paid period is missing. No access has been granted.</p>}
+            {["cancelled", "completed", "expired"].includes(sub.status) && <p className="mt-2 text-xs text-gray-400">This subscription is no longer active; it does not unlock premium tools.</p>}
+            {owner && !["creating", "cancelled", "completed", "expired"].includes(sub.status) && <div className="mt-3">
+              {confirmCancelId === sub.id ? <div className="rounded-lg border border-amber-400/25 bg-amber-400/5 p-3">
+                <p className="text-xs text-amber-100">Request cancellation at the billing-cycle end? This stops future renewals. Razorpay's signed webhook determines the final status.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className="rounded-full border border-rose-300/45 px-3 py-2 text-xs text-rose-100 disabled:opacity-40" disabled={Boolean(cancellingId)} onClick={() => void cancelRenewal(sub)}>
+                    {cancellingId === sub.id ? "Requesting…" : "Confirm TEST cancellation"}
+                  </button>
+                  <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-gray-200" disabled={Boolean(cancellingId)} onClick={() => setConfirmCancelId("")}>Keep subscription</button>
+                </div>
+              </div> : <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-40" disabled={Boolean(cancellingId) || Boolean(busyPlan)} onClick={() => setConfirmCancelId(sub.id)}>Cancel test renewal</button>}
+            </div>}
           </div>)}
         </div>
         {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
