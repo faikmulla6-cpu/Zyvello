@@ -136,3 +136,49 @@ Provider references:
 - https://razorpay.com/docs/payments/subscriptions/test/
 - https://razorpay.com/docs/api/payments/subscriptions/cancel-subscription/
 - https://razorpay.com/docs/api/payments/
+
+## 12 November: real browser QA + Razorpay TEST checkout boundary
+
+The previously-reported API auth gate 503 was reproduced in an authorized
+Chromium browser signed in using the verified QA account and a Gmail OTP.
+Root cause: Neon connection-pooler rejected the libpq startup parameter
+`options="-c statement_timeout=4000"`. The database itself was healthy
+and verified JWT session records existed. Fix commit `c74b57b` moves the
+statement timeout into a transaction-local SQL SET; the session guard
+continues to fail closed on unavailable database and verify current Auth
+session/credential-reset timestamps.
+
+Independent Modal service checks: using the restricted API DSN with **no**
+startup options connects successfully and returns true for the current QA
+session; startup options fail. JWKS endpoint returned HTTP 200. After staging
+deploy the real browser login and workspace requests succeeded:
+`GET /api/v1/workspaces` 200, `GET /api/v1/workspaces/<id>/billing/plans`
+200, `GET /api/v1/workspaces/<id>/billing` 200, and entitlement check 200.
+The unpaid workspace displayed the free premium feature preview and the
+configured TEST plan without unlocking any feature.
+
+A TEST-only checkout click on the existing QA owner's workspace successfully
+created a fresh Razorpay subscription, confirmed in staging Neon with
+`provider_subscription_id IS NOT NULL`, `status='created'`,
+`checkout_verified=false`, `paid_count=0`. Razorpay's Checkout loaded
+and explicitly displayed TEST MODE, but encountered a human verification
+challenge in the isolated automated Chrome. No card payment was authorized;
+the challenge was not bypassed. A guarded, TEST-only Modal server action
+verified the subscription was created, unpaid and recent, then used Razorpay's
+documented cancellation API to immediately cancel that specific QA intent.
+The provider replied `cancelled` and Zyvello's webhook ledger also recorded
+an additional `subscription.cancelled` event. Final database check:
+0 active paid entitlements, 0 stuck creating intents, 2 cancellation events
+among 5 total webhook events.
+
+The completed full Python suite on commit `c74b57b` reported 1,586 passed,
+184 skipped, 17 warnings, 0 failed. GitHub cross-platform matrix: all six
+Windows/Linux/macOS jobs passed, hosted-staging checks also passed.
+No production deployment, payment, outreach delivery, or AI execution changed.
+
+**Still not complete:** The new TEST subscription was not authorized by
+a test card due to provider human verification; accordingly provider-triggered
+success/failure **renewal** simulations cannot yet be exercised. These need a
+human to complete any challenge in the ordinary Test Checkout and to use
+Razorpay Test Dashboard's `Charge this now` controls. Never treat the signed
+webhook unit tests as substitutes for those real provider events.
