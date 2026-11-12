@@ -4,8 +4,12 @@ const failures = [];
 if (process.env.VITE_ZYVELLO_HOSTED_MODE !== "true") {
   failures.push("VITE_ZYVELLO_HOSTED_MODE must be true");
 }
-if (process.env.VITE_ZYVELLO_ENABLE_SIGNUP !== "false") {
-  failures.push("VITE_ZYVELLO_ENABLE_SIGNUP must be false for private beta");
+if (!["true", "false"].includes(process.env.VITE_ZYVELLO_ENABLE_SIGNUP)) {
+  failures.push("VITE_ZYVELLO_ENABLE_SIGNUP must explicitly be true or false");
+}
+if (process.env.VITE_ZYVELLO_ENABLE_SIGNUP === "true" &&
+    process.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES !== "true") {
+  failures.push("Public signup requires free workspace onboarding to be enabled");
 }
 
 const authBase = process.env.VITE_NEON_AUTH_URL;
@@ -35,5 +39,5 @@ if (failures.length) {
   for (const issue of failures) console.error("[Zyvello release gate] " + issue);
   process.exitCode = 1;
 } else {
-  console.log("Zyvello hosted private-beta build preflight passed.");
+  console.log("Zyvello hosted build preflight passed.");
 }

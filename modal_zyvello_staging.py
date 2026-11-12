@@ -64,4 +64,7 @@ def web():
         database_url=os.environ.get("ZYVELLO_API_DATABASE_URL"),
         billing_database_url=os.environ.get("ZYVELLO_BILLING_DATABASE_URL"),
         dispatch_job=dispatch_job,
+        # Public self-service signup: an unpaid workspace can view pricing,
+        # but every operational endpoint requires verified paid entitlement.
+        allow_workspace_creation_override=True,
     )

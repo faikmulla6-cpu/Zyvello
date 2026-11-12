@@ -92,6 +92,27 @@ class HostedStore:
             """, (auth_user_id,))
             return cursor.fetchall()
 
+    def has_paid_entitlement(self, auth_user_id: str, workspace_id: UUID) -> bool:
+        """Payment-only authorization using the restricted workspace API role.
+
+        Payment confirmation never comes from the browser: Razorpay's signed
+        webhook reconciles the immutable billing ledger separately. Read this
+        record anew on every feature request so expiration is immediate.
+        """
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM zyvello.billing_subscriptions
+                    WHERE workspace_id=%s AND status='active'
+                      AND paid_through > now()
+                      AND paid_count > 0
+                      AND checkout_verified = TRUE
+                ) AS entitled
+            """, (workspace_id,))
+            result = cursor.fetchone()
+            return bool(result and result["entitled"])
+
     def create_workspace(self, auth_user_id: str, *, slug: str, name: str) -> dict[str, Any]:
         from psycopg.errors import UniqueViolation
         if not SLUG_RE.fullmatch(slug):

@@ -201,7 +201,7 @@ class RazorpayApiTests(unittest.TestCase):
         self.patch.start()
         self.addCleanup(self.patch.stop)
         self.client = TestClient(create_app(
-            auth_base_url="https://identity.example.test/db/auth", store_override=FakeStore(),
+            auth_base_url="https://identity.example.test/db/auth", store_override=FakeStore(), subscription_enforcement_override=False,
             billing_settings_override=settings(), billing_api_override=self.billing,
             billing_webhook_override=self.webhooks, billing_gateway_override=self.gateway,
         ))
@@ -265,7 +265,7 @@ class RazorpayApiTests(unittest.TestCase):
 
     def test_billing_is_disabled_by_default(self):
         disabled = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
-                                         store_override=FakeStore(),
+                                         store_override=FakeStore(), subscription_enforcement_override=False,
                                          billing_settings_override=BillingSettings.from_env({})))
         self.assertFalse(disabled.get("/api/v1/capabilities").json()["payments_enabled"])
         self.assertEqual(disabled.get(f"/api/v1/workspaces/{WORKSPACE_A}/billing", headers=self.auth()).status_code, 503)

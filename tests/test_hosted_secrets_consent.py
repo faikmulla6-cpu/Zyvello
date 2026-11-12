@@ -123,7 +123,7 @@ class HostedSecretsAndPermissionApiTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.client = TestClient(create_app(auth_base_url="https://auth.example.test/db/auth",
-                                            store_override=self.store, credential_vault_override=self.vault))
+                                            store_override=self.store, subscription_enforcement_override=False, credential_vault_override=self.vault))
 
     @staticmethod
     def header(token):
@@ -154,7 +154,7 @@ class HostedSecretsAndPermissionApiTests(unittest.TestCase):
                                          json={"api_key": "not-a-groq-credential"}).status_code, 422)
         with patch.dict("os.environ", {"ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS": ""}):
             missing_vault = TestClient(create_app(auth_base_url="https://auth.example.test/db/auth",
-                                                  store_override=self.store))
+                                                  store_override=self.store, subscription_enforcement_override=False))
         self.assertEqual(missing_vault.put(path, headers=self.header("a"),
                                            json={"api_key": SAMPLE_KEY}).status_code, 503)
 
@@ -194,7 +194,7 @@ class HostedSecretsAndPermissionApiTests(unittest.TestCase):
 
         dispatch = []
         enabled = TestClient(create_app(auth_base_url="https://auth.example.test/db/auth",
-                                        store_override=self.store, credential_vault_override=self.vault,
+                                        store_override=self.store, subscription_enforcement_override=False, credential_vault_override=self.vault,
                                         enable_ai_drafts_override=True,
                                         dispatch_job=lambda: dispatch.append(True)))
         # Even with the feature flag, the credential and target must exist.

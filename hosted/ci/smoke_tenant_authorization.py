@@ -101,6 +101,7 @@ def audit(fetcher, token_a: str, token_b: str,
     users = []
     workspaces = []
     membership_sets = []
+    entitled_states = []
     for label, token, selected in (("A", token_a, workspace_a), ("B", token_b, workspace_b)):
         _, identity = expect_code(fetcher, f"{label} identity", "/api/v1/me", token, {200})
         if identity.get("status") != "identity_verified" or not identity.get("user_id"):
@@ -111,7 +112,12 @@ def audit(fetcher, token_a: str, token_b: str,
         if not isinstance(rows, list):
             raise SmokeFailure(f"Account {label}: malformed membership list")
         membership_sets.append({str(row.get("id")) for row in rows if isinstance(row, dict)})
-        workspaces.append(pick_workspace(rows, selected, label))
+        chosen = pick_workspace(rows, selected, label)
+        workspaces.append(chosen)
+        _, ent = expect_code(fetcher, f"{label} paid entitlement", f"/api/v1/workspaces/{chosen}/entitlement", token, {200})
+        if type(ent.get("entitled")) is not bool:
+            raise SmokeFailure(f"Account {label}: malformed entitlement state")
+        entitled_states.append(ent["entitled"])
 
     if users[0] == users[1] or workspaces[0] == workspaces[1]:
         raise SmokeFailure("The test requires different users with different workspaces")
@@ -120,13 +126,14 @@ def audit(fetcher, token_a: str, token_b: str,
 
     checks = 0
     skipped = 0
-    for label, token, own_id, other_id in (
-        ("A", token_a, workspaces[0], workspaces[1]),
-        ("B", token_b, workspaces[1], workspaces[0]),
+    for label, token, own_id, other_id, entitled in (
+        ("A", token_a, workspaces[0], workspaces[1], entitled_states[0]),
+        ("B", token_b, workspaces[1], workspaces[0], entitled_states[1]),
     ):
         for suffix in ("",) + tuple("/" + item for item in READ_ENDPOINTS):
+            own_code = {200} if not suffix or entitled else {402}
             expect_code(fetcher, f"{label} own {suffix or 'workspace'}",
-                        f"/api/v1/workspaces/{own_id}{suffix}", token, {200})
+                        f"/api/v1/workspaces/{own_id}{suffix}", token, own_code)
             checks += 1
             expect_code(fetcher, f"{label} cross-tenant {suffix or 'workspace'}",
                         f"/api/v1/workspaces/{other_id}{suffix}", token, {403, 404})
@@ -134,7 +141,8 @@ def audit(fetcher, token_a: str, token_b: str,
 
         for suffix in OPTIONAL_ENDPOINTS:
             own_path = f"/api/v1/workspaces/{own_id}/{suffix}"
-            status, _ = expect_code(fetcher, f"{label} own {suffix}", own_path, token, {200, 503})
+            allowed = {200, 503} if suffix == "billing" or entitled else {402}
+            status, _ = expect_code(fetcher, f"{label} own {suffix}", own_path, token, allowed)
             if status == 503:
                 skipped += 1  # A disabled service cannot prove tenant authorization.
                 continue

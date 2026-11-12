@@ -89,7 +89,7 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: boolean }) {
+function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId: string; owner: boolean; onEntitlementChange: (paid: boolean) => void }) {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<BillingSubscription[]>([]);
   const [enabled, setEnabled] = useState(false);
@@ -113,6 +113,7 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
       if (!cancelled) {
         setPlans(result.plans);
         setSubscriptions(result.subscriptions);
+        onEntitlementChange(result.subscriptions.some(sub => sub.entitled));
         setEnabled(true);
       }
     }).catch(cause => {
@@ -124,12 +125,13 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
       if (!cancelled) setCheckingBilling(false);
     });
     return () => { cancelled = true; };
-  }, [refresh]);
+  }, [refresh, onEntitlementChange]);
 
   async function refreshBilling() {
     try {
       const result = await refresh();
       setSubscriptions(result.subscriptions);
+      onEntitlementChange(result.subscriptions.some(sub => sub.entitled));
       setBillingError("");
     } catch (cause) {
       setBillingError(cause instanceof Error ? cause.message : "Could not refresh billing");
@@ -169,6 +171,7 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
             for (let attempt = 0; attempt < 5; attempt += 1) {
               const refreshed = await refresh();
               setSubscriptions(refreshed.subscriptions);
+              onEntitlementChange(refreshed.subscriptions.some(sub => sub.entitled));
               const latest = refreshed.subscriptions.find(sub => sub.id === created.intent_id);
               if (latest?.entitled) {
                 setFeedback("Test payment confirmed. Test access is active.");
@@ -229,6 +232,7 @@ function BillingPanel({ workspaceId, owner }: { workspaceId: string; owner: bool
 export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut: () => void; signingOut: boolean }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string>("");
+  const [entitlement, setEntitlement] = useState<boolean | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceSlug, setWorkspaceSlug] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -253,6 +257,16 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
     setActiveWorkspace(current => current && result.workspaces.some(workspace => workspace.id === current)
       ? current : result.workspaces[0]?.id || "");
   }, []);
+
+  useEffect(() => {
+    if (!activeWorkspace) { setEntitlement(null); return; }
+    let cancelled = false;
+    setEntitlement(null);
+    void requestApi<{ entitled: boolean }>(`/api/v1/workspaces/${activeWorkspace}/entitlement`)
+      .then(result => { if (!cancelled) setEntitlement(result.entitled); })
+      .catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : "Subscription status unavailable"); });
+    return () => { cancelled = true; };
+  }, [activeWorkspace]);
 
   const refreshJobs = useCallback(async (workspaceId: string) => {
     const result = await requestApi<{ jobs: Job[] }>(`/api/v1/workspaces/${workspaceId}/jobs`);
@@ -289,7 +303,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
   }, [refreshWorkspaces]);
 
   useEffect(() => {
-    if (!activeWorkspace) { setJobs([]); setContacts([]); setCampaigns([]); return; }
+    if (!activeWorkspace || entitlement !== true) { setJobs([]); setContacts([]); setCampaigns([]); return; }
     let cancelled = false;
     setContacts([]);
     setCampaigns([]);
@@ -307,16 +321,16 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
       void refreshJobs(activeWorkspace).catch(() => { /* Keep existing state during transient errors. */ });
     }, 8000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [activeWorkspace, refreshJobs, refreshContacts, refreshCampaigns]);
+  }, [activeWorkspace, entitlement, refreshJobs, refreshContacts, refreshCampaigns]);
 
   useEffect(() => {
-    if (!activeWorkspace || !activeCampaign) { setCampaignContacts([]); return; }
+    if (!activeWorkspace || entitlement !== true || !activeCampaign) { setCampaignContacts([]); return; }
     let cancelled = false;
     void refreshCampaignContacts(activeWorkspace, activeCampaign).catch(cause => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load campaign contacts");
     });
     return () => { cancelled = true; };
-  }, [activeWorkspace, activeCampaign, refreshCampaignContacts]);
+  }, [activeWorkspace, entitlement, activeCampaign, refreshCampaignContacts]);
 
   function changeName(value: string) {
     setWorkspaceName(value);
@@ -334,6 +348,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
         method: "POST", body: JSON.stringify({ name: workspaceName.trim(), slug: workspaceSlug.trim() }),
       });
       setWorkspaces(current => [result.workspace, ...current]);
+      setEntitlement(false);
       setActiveWorkspace(result.workspace.id);
       setWorkspaceName("");
       setWorkspaceSlug("");
@@ -420,7 +435,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
     <div className="w-full max-w-4xl space-y-6" aria-label="Your Zyvello workspaces">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 px-3 py-1 text-xs text-emerald-200"><ShieldCheck className="h-4 w-4" /> Verified private beta</span>
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 px-3 py-1 text-xs text-emerald-200"><ShieldCheck className="h-4 w-4" /> Verified Zyvello account</span>
           <h1 className="mt-4 text-3xl font-semibold">Your workspace</h1>
           <p className="mt-2 text-sm text-gray-400">Each agency has its own data. Only its members can access it.</p>
         </div>
@@ -434,7 +449,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
         {workspaces.length > 0 && <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
           <div className="flex items-center gap-3"><BriefcaseBusiness className="h-5 w-5 text-violet-300" /><h2 className="text-xl font-semibold">Agency workspaces</h2></div>
           <label className="mt-5 block text-sm text-gray-300" htmlFor="workspace-select">Current workspace</label>
-          <select id="workspace-select" className="mt-2 w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white" value={activeWorkspace} onChange={event => setActiveWorkspace(event.target.value)}>
+          <select id="workspace-select" className="mt-2 w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white" value={activeWorkspace} onChange={event => { setEntitlement(null); setActiveWorkspace(event.target.value); }}>
             {workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.role})</option>)}
           </select>
           <p className="mt-3 text-xs text-gray-400">Workspace slug: {selected?.slug}</p>
@@ -442,7 +457,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
 
         {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES !== "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
           <h2 className="text-xl font-semibold">Workspace access pending</h2>
-          <p className="mt-2 text-sm text-gray-300">Zyvello is currently invitation-only. Your email is verified, but you have not been granted an agency workspace. Contact the Zyvello team for an invitation. No customer data is available to this account.</p>
+          <p className="mt-2 text-sm text-gray-300">Workspace creation is not enabled in this preview yet. Your account is verified, and no customer data is accessible without a workspace. Public onboarding will open with the subscription-gated release.</p>
         </section>}
         {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES === "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
           <h2 className="text-xl font-semibold">Create your first agency workspace</h2>
@@ -454,7 +469,21 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
           </form>
         </section>}
 
-        {selected && <div className="grid gap-6 lg:grid-cols-2">
+        {selected && entitlement === null && <p role="status" className="text-sm text-gray-300">Checking subscription access…</p>}
+        {selected && entitlement === false && <section className="rounded-3xl border border-violet-400/25 bg-violet-500/5 p-5 sm:p-7">
+          <h2 className="text-xl font-semibold">Explore Zyvello — free account</h2>
+          <p className="mt-2 text-sm text-gray-300">Your workspace is ready. Contacts, campaigns, AI tools and background jobs are premium features and require an active paid subscription.</p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {["Business contacts", "Campaign management", "AI-assisted drafts", "Background automation"].map(feature =>
+              <div key={feature} className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <p className="font-medium text-white">{feature}</p>
+                <p className="mt-1 text-xs text-gray-400">Subscription required</p>
+              </div>
+            )}
+          </div>
+          <p className="mt-4 text-sm text-violet-200">Review subscription options below to unlock paid tools when checkout is available.</p>
+        </section>}
+        {selected && entitlement === true && <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Workspace contacts">
             <h2 className="text-xl font-semibold">Contacts</h2>
             <p className="mt-1 text-sm text-gray-400">Private to {selected.name}. No emails are sent.</p>
@@ -513,7 +542,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
           </section>
         </div>}
 
-        {selected && <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+        {selected && entitlement === true && <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-xl font-semibold">Background jobs</h2><p className="mt-1 text-sm text-gray-400">Database-backed, retryable, isolated to {selected.name}.</p></div>
             <button type="button" onClick={() => void refreshJobs(activeWorkspace).catch(() => setError("Refresh failed"))} className="flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm" aria-label="Refresh jobs"><RefreshCw className="h-4 w-4" /> Refresh</button>
@@ -531,7 +560,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
             </div>)}
           </div>
         </section>}
-        {selected && <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"} />}
+        {selected && <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"} onEntitlementChange={setEntitlement} />}
       </>}
       <p className="text-xs leading-5 text-gray-400">Private staging only. Prospecting, email delivery, payment collection and production automation will remain unavailable until verified and enabled separately.</p>
     </div>

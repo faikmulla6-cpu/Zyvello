@@ -24,9 +24,14 @@ class FakeStore:
         self.contacts = {}
         self.campaigns = {}
         self.recipients = set()
+        self.paid_workspaces = set()
 
     def list_workspaces(self, auth_user_id):
         return self.by_owner.get(auth_user_id, [])
+
+    def has_paid_entitlement(self, auth_user_id, workspace_id):
+        self.get_workspace(auth_user_id, workspace_id)
+        return workspace_id in self.paid_workspaces
 
     def create_workspace(self, auth_user_id, *, slug, name):
         row = {"id": UUID("00000000-0000-4000-8000-0000000000c3"), "name": name, "slug": slug, "role": "owner"}
@@ -113,7 +118,7 @@ class HostedWorkspaceApiTests(unittest.TestCase):
             self.dispatch_count += 1
 
         self.client = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
-                                            store_override=self.store, dispatch_job=dispatch,
+                                            store_override=self.store, subscription_enforcement_override=False, dispatch_job=dispatch,
                                             allow_workspace_creation_override=True))
 
     @staticmethod
@@ -153,21 +158,60 @@ class HostedWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(len(self.store.by_owner["test-auth-a"]), 2)
         self.assertEqual(len(self.store.by_owner["test-auth-b"]), 1)
 
-    def test_uninvited_identity_cannot_create_workspace_even_if_feature_enabled(self):
-        # This is defense in depth against managed email-OTP auto-signup.
+    def test_public_onboarding_allows_new_verified_identity_to_create_free_workspace(self):
         result = self.client.get("/api/v1/workspaces", headers=self.token("good-new"))
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["workspaces"], [])
-        blocked = self.client.post("/api/v1/workspaces", headers=self.token("good-new"),
-                                   json={"slug": "uninvited-new-agency", "name": "Uninvited agency"})
-        self.assertEqual(blocked.status_code, 403)
-        self.assertNotIn("test-auth-uninvited", self.store.by_owner)
+        created = self.client.post("/api/v1/workspaces", headers=self.token("good-new"),
+                                   json={"slug": "new-agency", "name": "New agency"})
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(len(self.store.by_owner["test-auth-uninvited"]), 1)
         self.assertEqual(self.client.get(f"/api/v1/workspaces/{WORKSPACE_A}",
                                          headers=self.token("good-new")).status_code, 404)
 
+    def test_paid_subscription_is_required_for_every_operational_workspace_route(self):
+        gated = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
+                                      store_override=self.store, subscription_enforcement_override=True,
+                                      allow_workspace_creation_override=True))
+        headers = self.token("good-a")
+        feature_paths = (
+            f"/api/v1/workspaces/{WORKSPACE_A}/contacts",
+            f"/api/v1/workspaces/{WORKSPACE_A}/campaigns",
+            f"/api/v1/workspaces/{WORKSPACE_A}/jobs",
+            f"/api/v1/workspaces/{WORKSPACE_A}/drafts",
+            f"/api/v1/workspaces/{WORKSPACE_A}/credentials/groq",
+        )
+        self.assertEqual(gated.get("/api/v1/workspaces", headers=headers).status_code, 200)
+        self.assertEqual(gated.get(f"/api/v1/workspaces/{WORKSPACE_A}", headers=headers).status_code, 200)
+        for path in feature_paths:
+            with self.subTest(path=path):
+                self.assertEqual(gated.get(path, headers=headers).status_code, 402)
+                self.assertEqual(gated.get(path, headers=self.token("good-b")).status_code, 404)
+        self.assertEqual(gated.post(feature_paths[0], headers=headers,
+                                    json={"full_name": "Not Paid", "email": "unpaid@example.test"}).status_code, 402)
+        self.store.paid_workspaces.add(UUID(WORKSPACE_A))
+        self.assertEqual(gated.get(feature_paths[0], headers=headers).status_code, 200)
+        self.assertEqual(gated.post(feature_paths[0], headers=headers,
+                                    json={"full_name": "Paid User", "email": "paid@example.test"}).status_code, 201)
+        self.store.paid_workspaces.remove(UUID(WORKSPACE_A))
+        self.assertEqual(gated.get(feature_paths[0], headers=headers).status_code, 402)
+
+    def test_all_operational_routes_have_paid_dependency(self):
+        protected = 0
+        for route in self.client.app.routes:
+            path = getattr(route, "path", "")
+            if "/api/v1/workspaces/{workspace_id}/" not in path:
+                continue
+            if "/billing" in path or path.endswith("/entitlement"):
+                continue
+            protected += 1
+            self.assertTrue(any(getattr(item.call, "__name__", "") == "require_paid_workspace"
+                                for item in route.dependant.dependencies), path)
+        self.assertGreaterEqual(protected, 15)
+
     def test_closed_beta_rejects_new_workspace_even_with_verified_jwt(self):
         locked = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",
-                                       store_override=self.store,
+                                       store_override=self.store, subscription_enforcement_override=False,
                                        allow_workspace_creation_override=False))
         response = locked.post("/api/v1/workspaces", headers=self.token("good-b"),
                                json={"slug": "fresh-new-agency", "name": "Uninvited agency"})

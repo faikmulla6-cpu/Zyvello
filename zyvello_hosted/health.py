@@ -99,6 +99,7 @@ def create_app(
     credential_vault_override: CredentialVault | None = None,
     enable_ai_drafts_override: bool | None = None,
     allow_workspace_creation_override: bool | None = None,
+    subscription_enforcement_override: bool | None = None,
     session_guard_override: Callable | None = None,
 ) -> FastAPI:
     app = FastAPI(
@@ -120,9 +121,13 @@ def create_app(
         credential_vault = CredentialVault(os.environ["ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"])
     ai_drafts_enabled = (enable_ai_drafts_override if enable_ai_drafts_override is not None
                          else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
-    # Closed private beta: no self-provisioning from a merely valid OTP identity.
+    # Public onboarding is enabled only on deployments with paid-feature checks.
     allow_workspace_creation = (allow_workspace_creation_override if allow_workspace_creation_override is not None
                                 else os.getenv("ZYVELLO_ENABLE_NEW_WORKSPACES", "false").lower() == "true")
+    # Never allow an environment variable to accidentally disable payment
+    # enforcement in staging or production. Test doubles opt out explicitly.
+    enforce_paid_features = (subscription_enforcement_override
+                             if subscription_enforcement_override is not None else True)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -187,6 +192,16 @@ def create_app(
             raise HTTPException(503, "Test-mode billing is not configured")
         return billing_api, billing_gateway
 
+    async def require_paid_workspace(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)) -> None:
+        if not enforce_paid_features:
+            return
+        # Membership is checked first, so a foreign tenant's billing state
+        # cannot be probed. Fail closed on missing/unpaid/expired entitlements.
+        entitled = await store_call(db.has_paid_entitlement, identity.user_id, workspace_id)
+        if not entitled:
+            raise HTTPException(402, "An active paid subscription is required for this feature")
+
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"service": "zyvello-staging", "status": "alive"}
@@ -214,14 +229,7 @@ def create_app(
     @app.post("/api/v1/workspaces", status_code=201)
     async def create_workspace(body: CreateWorkspaceRequest, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         if not allow_workspace_creation:
-            raise HTTPException(403, "New workspaces require a private-beta invitation")
-        # The managed email-OTP provider can auto-register an identity even
-        # when email/password sign-up is off. A verified JWT is NOT an invite:
-        # the person must already belong to an approved workspace before
-        # self-provisioning another, even when the feature flag is enabled.
-        memberships = await store_call(db.list_workspaces, identity.user_id)
-        if not memberships:
-            raise HTTPException(403, "Workspace creation requires an existing approved membership")
+            raise HTTPException(403, "Workspace onboarding is not available on this deployment")
         row = await store_call(db.create_workspace, identity.user_id, name=body.name, slug=body.slug)
         return {"workspace": serialize_row(row)}
 
@@ -230,43 +238,50 @@ def create_app(
         row = await store_call(db.get_workspace, identity.user_id, workspace_id)
         return {"workspace": serialize_row(row)}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/jobs")
+    @app.get("/api/v1/workspaces/{workspace_id}/entitlement")
+    async def get_workspace_entitlement(workspace_id: UUID, identity=Depends(verified_identity),
+                                        db: HostedStore = Depends(ready_store)):
+        entitled = await store_call(db.has_paid_entitlement, identity.user_id, workspace_id)
+        return {"entitled": bool(entitled), "paid_features_enforced": enforce_paid_features,
+                "checkout_available": bool(billing_settings.enabled)}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/jobs", dependencies=[Depends(require_paid_workspace)])
     async def list_jobs(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_jobs, identity.user_id, workspace_id)
         return {"jobs": [serialize_row(row) for row in rows]}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/contacts")
+    @app.get("/api/v1/workspaces/{workspace_id}/contacts", dependencies=[Depends(require_paid_workspace)])
     async def list_contacts(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_contacts, identity.user_id, workspace_id)
         return {"contacts": [serialize_row(row) for row in rows]}
 
-    @app.post("/api/v1/workspaces/{workspace_id}/contacts", status_code=201)
+    @app.post("/api/v1/workspaces/{workspace_id}/contacts", status_code=201, dependencies=[Depends(require_paid_workspace)])
     async def create_contact(workspace_id: UUID, body: CreateContactRequest, identity=Depends(verified_identity),
                              db: HostedStore = Depends(ready_store)):
         row = await store_call(db.create_contact, identity.user_id, workspace_id,
                                full_name=body.full_name, email=body.email, company=body.company)
         return {"contact": serialize_row(row)}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission")
+    @app.get("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission", dependencies=[Depends(require_paid_workspace)])
     async def get_contact_permission(workspace_id: UUID, contact_id: UUID,
                                      identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.get_contact_permission, identity.user_id, workspace_id, contact_id)
         return {"permission": serialize_row(row), "outbound_allowed": False}
 
-    @app.post("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission", status_code=201)
+    @app.post("/api/v1/workspaces/{workspace_id}/contacts/{contact_id}/permission", status_code=201, dependencies=[Depends(require_paid_workspace)])
     async def record_contact_permission(workspace_id: UUID, contact_id: UUID, body: ContactPermissionRequest,
                                         identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.record_contact_permission, identity.user_id, workspace_id, contact_id,
                                action=body.action, source=body.source, evidence=body.evidence)
         return {"permission": serialize_row(row), "outbound_allowed": False}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    @app.get("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def groq_credential_status(workspace_id: UUID, identity=Depends(verified_identity),
                                      db: HostedStore = Depends(ready_store)):
         row = await store_call(db.get_groq_credential_status, identity.user_id, workspace_id)
         return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
 
-    @app.put("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    @app.put("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def save_groq_credential(workspace_id: UUID, body: PutGroqCredentialRequest,
                                    identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         if credential_vault is None:
@@ -278,19 +293,19 @@ def create_app(
         row = await store_call(db.put_groq_credential, identity.user_id, workspace_id, ciphertext=ciphertext)
         return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
 
-    @app.delete("/api/v1/workspaces/{workspace_id}/credentials/groq")
+    @app.delete("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def remove_groq_credential(workspace_id: UUID, identity=Depends(verified_identity),
                                      db: HostedStore = Depends(ready_store)):
         row = await store_call(db.delete_groq_credential, identity.user_id, workspace_id)
         return {"provider": "groq", **row, "ai_execution_enabled": ai_drafts_enabled}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/drafts")
+    @app.get("/api/v1/workspaces/{workspace_id}/drafts", dependencies=[Depends(require_paid_workspace)])
     async def list_generated_drafts(workspace_id: UUID, identity=Depends(verified_identity),
                                     db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_generated_drafts, identity.user_id, workspace_id)
         return {"drafts": [serialize_row(row) for row in rows], "outbound_sending_enabled": False}
 
-    @app.post("/api/v1/workspaces/{workspace_id}/drafts", status_code=202)
+    @app.post("/api/v1/workspaces/{workspace_id}/drafts", status_code=202, dependencies=[Depends(require_paid_workspace)])
     async def enqueue_groq_draft(workspace_id: UUID, body: CreateGroqDraftRequest,
                                  identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         if not ai_drafts_enabled:
@@ -307,31 +322,31 @@ def create_app(
                 pass
         return {"job": serialize_row(job), "dispatch_requested": dispatched, "sent": False}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/campaigns")
+    @app.get("/api/v1/workspaces/{workspace_id}/campaigns", dependencies=[Depends(require_paid_workspace)])
     async def list_campaigns(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_campaigns, identity.user_id, workspace_id)
         return {"campaigns": [serialize_row(row) for row in rows]}
 
-    @app.post("/api/v1/workspaces/{workspace_id}/campaigns", status_code=201)
+    @app.post("/api/v1/workspaces/{workspace_id}/campaigns", status_code=201, dependencies=[Depends(require_paid_workspace)])
     async def create_campaign(workspace_id: UUID, body: CreateCampaignRequest, identity=Depends(verified_identity),
                               db: HostedStore = Depends(ready_store)):
         row = await store_call(db.create_campaign, identity.user_id, workspace_id,
                                name=body.name, goal=body.goal)
         return {"campaign": serialize_row(row)}
 
-    @app.get("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts")
+    @app.get("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts", dependencies=[Depends(require_paid_workspace)])
     async def list_campaign_contacts(workspace_id: UUID, campaign_id: UUID,
                                      identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_campaign_contacts, identity.user_id, workspace_id, campaign_id)
         return {"contacts": [serialize_row(row) for row in rows]}
 
-    @app.post("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts", status_code=201)
+    @app.post("/api/v1/workspaces/{workspace_id}/campaigns/{campaign_id}/contacts", status_code=201, dependencies=[Depends(require_paid_workspace)])
     async def add_campaign_contact(workspace_id: UUID, campaign_id: UUID, body: AddCampaignContactRequest,
                                    identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.add_campaign_contact, identity.user_id, workspace_id, campaign_id, body.contact_id)
         return serialize_row(row)
 
-    @app.post("/api/v1/workspaces/{workspace_id}/jobs", status_code=202)
+    @app.post("/api/v1/workspaces/{workspace_id}/jobs", status_code=202, dependencies=[Depends(require_paid_workspace)])
     async def enqueue_job(workspace_id: UUID, body: EnqueueJobRequest, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.enqueue_health_job, identity.user_id, workspace_id, idempotency_key=body.idempotency_key)
         # Persist first; dispatch is best-effort and may be retried. Never
