@@ -40,6 +40,26 @@ class HostedHealthTests(unittest.TestCase):
             self.assertEqual(client.get("/static/favicon.svg").status_code, 200)
             self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
+    def test_hosted_root_build_assets_are_served_at_compiled_urls(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "index.html").write_text('<script src="/assets/app.js"></script>', encoding="utf-8")
+            for directory in ("assets", "static", "fonts"):
+                (root / directory).mkdir()
+            (root / "assets" / "app.js").write_text('console.log("staging");', encoding="utf-8")
+            (root / "static" / "favicon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
+            (root / "fonts" / "demo.woff").write_bytes(b"fontfixture")
+            (root / "mailboxes.js").write_text("export const mailbox = true;", encoding="utf-8")
+            (root / "sidebar.js").write_text("export const sidebar = true;", encoding="utf-8")
+            client = TestClient(create_app(static_dir=folder))
+            self.assertEqual(client.get("/signup").status_code, 200)
+            self.assertEqual(client.get("/assets/app.js").status_code, 200)
+            self.assertEqual(client.get("/static/favicon.svg").status_code, 200)
+            self.assertEqual(client.get("/fonts/demo.woff").status_code, 200)
+            self.assertEqual(client.get("/mailboxes.js").status_code, 200)
+            self.assertEqual(client.get("/sidebar.js").status_code, 200)
+            self.assertEqual(client.get("/api/auth/login").status_code, 404)
+
     def test_only_the_private_beta_preview_can_call_the_api_from_a_browser(self):
         headers = {
             "Origin": "https://peachpuff-curlew-471332.hostingersite.com",

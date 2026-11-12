@@ -469,6 +469,22 @@ def create_app(
     # dashboard or its local owner-auth routes, and does not send messages.
     if static_dir and Path(static_dir).is_dir():
         app.mount("/static/landing", StaticFiles(directory=static_dir), name="staging-static")
+        # Hosted builds are compiled with --base / for standalone hosting.
+        # Modal must expose their immutable assets at the same absolute URLs.
+        for prefix in ("assets", "fonts", "static"):
+            asset_dir = Path(static_dir) / prefix
+            if asset_dir.is_dir():
+                app.mount(f"/{prefix}", StaticFiles(directory=asset_dir), name=f"hosted-{prefix}")
+
+        for script_name in ("mailboxes.js", "sidebar.js"):
+            script_path = Path(static_dir) / script_name
+            if script_path.is_file():
+                app.add_api_route(
+                    f"/{script_name}",
+                    lambda name=script_name: FileResponse(Path(static_dir) / name, media_type="text/javascript"),
+                    methods=["GET"],
+                    include_in_schema=False,
+                )
 
         if Path(static_dir, "favicon.svg").is_file():
             @app.get("/static/favicon.svg", include_in_schema=False)

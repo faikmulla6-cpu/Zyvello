@@ -72,10 +72,12 @@ def main() -> int:
             and caps.get("ai_enabled") is False,
         )
         login_code, login_html = get_text("/login")
-        entry = re.search(r'src="(/static/landing/assets/index-[^"]+\.js)"', login_html)
+        # Hosted staging is built with Vite --base / and deployed from
+        # frontend/dist. A /static/landing bundle indicates a stale preview.
+        entry = re.search(r'src="(/assets/index-[^"]+\.js)"', login_html)
         bundle_code, bundle_js = get_text(entry.group(1)) if entry else (0, "")
         check(
-            "hosted login bundle active (not legacy single-owner auth)",
+            "current public hosted login bundle active (not stale preview)",
             login_code == 200 and entry is not None
             and bundle_code == 200 and "HostedAuthPage" in bundle_js,
         )
