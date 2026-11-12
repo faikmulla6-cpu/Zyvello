@@ -69,19 +69,23 @@ does not automatically erase contacts or workspace records.
 
 ## Refunds and service complaints (proposed)
 
-There is no self-service automated refund endpoint yet. Customers can
-request a review of a duplicate charge, an unauthorized payment, or a
-verified material failure to deliver the advertised hosted service.
-Refunds due by applicable law and regulator/payment-network rules will be
-honoured. For other requests, an authorized operator must review the case,
-explain the outcome, and process an approved refund using Razorpay to
-the original eligible payment method. Do not promise a fixed payout date
-or blanket 'no refunds' restriction. Refund request submission must not
-require disclosure of full card data.
+There is no self-service automated refund endpoint yet. The proposed
+customer policy grants a **7-calendar-day first-payment review window**
+when the paid hosted functionality was not used or was materially
+unavailable. Verified duplicate/unauthorised charges and refunds required
+by law remain eligible regardless of the goodwill window. Voluntary
+mid-cycle cancellation of an already usable, used monthly plan does
+not automatically trigger a prorated refund; mandatory statutory rights
+are never waived. Subsequent renewal/refund disputes are reviewed case
+by case with the payment evidence, not automatically rejected.
 
-**Pending operator decision:** optional 7-day first-payment goodwill
-refund and whether prorated refunds apply to plan changes. This is
-intentionally NOT declared final until the operator approves its cost.
+An authorised operator must review and communicate the decision and,
+where approved, issue the refund via Razorpay to the eligible original
+payment method. The bank/payment network determines the final credit
+timing; do not promise immediate credit. No full card details should
+ever be requested for support. **The operator must approve and
+operationally support these refund rules before publication** and
+verify them with legal/tax counsel.
 
 ## Customer records, cancellations and privacy (proposed)
 
