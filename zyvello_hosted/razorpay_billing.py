@@ -240,3 +240,24 @@ class RazorpayGateway:
             or response.get("status") != "created"):
             raise BillingUnavailable("Unexpected Razorpay subscription response")
         return subscription_id
+
+    def cancel_subscription(self, *, subscription_id: str, provider_plan_id: str,
+                            at_cycle_end: bool = True) -> str:
+        """Owner-requested TEST cancellation; provider webhook remains authority.
+
+        Never allow URL injection, a browser-provided subscription identifier,
+        a different plan, or a request to charge real money.
+        """
+        if (not SUBSCRIPTION_ID_RE.fullmatch(subscription_id)
+            or not PLAN_ID_RE.fullmatch(provider_plan_id)
+            or type(at_cycle_end) is not bool):
+            raise BillingRejected("Invalid subscription cancellation request")
+        response = self._request("POST", "subscriptions/" + subscription_id + "/cancel",
+                                 {"cancel_at_cycle_end": at_cycle_end})
+        status = response.get("status")
+        if (response.get("id") != subscription_id
+            or response.get("plan_id") != provider_plan_id
+            or status not in ("created", "authenticated", "active", "pending",
+                              "halted", "paused", "cancelled")):
+            raise BillingUnavailable("Unexpected provider cancellation response")
+        return status

@@ -97,6 +97,27 @@ class BillingApiStore(HostedStore):
                 raise StoreNotFound("Subscription not found")
             return row
 
+    def get_manageable_subscription(self, auth_user_id: str, workspace_id: UUID,
+                                    subscription_id: UUID) -> dict[str, Any]:
+        """Only workspace owners may request a provider-level cancellation."""
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("""
+                SELECT 1 FROM zyvello.memberships
+                WHERE workspace_id=%s AND auth_user_id=%s AND role='owner'
+            """, (workspace_id, auth_user_id))
+            if not cursor.fetchone():
+                raise StoreForbidden("Only the workspace owner can manage billing")
+            cursor.execute("""
+                SELECT id, provider_subscription_id, provider_plan_id, status
+                FROM zyvello.billing_subscriptions
+                WHERE workspace_id=%s AND id=%s
+            """, (workspace_id, subscription_id))
+            row = cursor.fetchone()
+            if row is None:
+                raise StoreNotFound("Subscription not found")
+            return row
+
     def mark_checkout_verified(self, auth_user_id: str, subscription_id: UUID,
                                payment_id: str) -> None:
         with self.transaction(auth_user_id) as cursor:

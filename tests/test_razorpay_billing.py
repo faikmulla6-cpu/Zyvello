@@ -14,7 +14,7 @@ from tests.test_hosted_workspace import FakeStore, WORKSPACE_A, WORKSPACE_B
 from zyvello_hosted.auth import TokenRejected, VerifiedIdentity
 from zyvello_hosted.health import create_app
 from zyvello_hosted.razorpay_billing import (
-    BillingRejected, BillingSettings, Plan, RazorpayGateway,
+    BillingRejected, BillingUnavailable, BillingSettings, Plan, RazorpayGateway,
     parse_verified_webhook, verify_checkout_signature, verify_webhook_signature,
 )
 from zyvello_hosted.repository import StoreNotFound
@@ -161,6 +161,14 @@ class FakeBillingApi:
             raise StoreNotFound("Workspace not found")
         return next(row for row in self.rows.values() if row["id"] == intent_id)
 
+    def get_manageable_subscription(self, user, workspace, intent_id):
+        if user != "test-auth-a" or str(workspace) != WORKSPACE_A:
+            raise StoreNotFound("Workspace not found")
+        found = next((row for row in self.rows.values() if row["id"] == intent_id), None)
+        if found is None:
+            raise StoreNotFound("Subscription not found")
+        return {**found, "provider_plan_id": PLAN_ID}
+
     def mark_checkout_verified(self, user, intent_id, payment_id):
         self.marked.append(payment_id)
 
@@ -168,10 +176,15 @@ class FakeBillingApi:
 class FakeGateway:
     def __init__(self):
         self.calls = 0
+        self.cancellations = []
 
     def create_subscription(self, *, plan, local_intent_id):
         self.calls += 1
         return SUB_ID
+
+    def cancel_subscription(self, *, subscription_id, provider_plan_id, at_cycle_end):
+        self.cancellations.append((subscription_id, provider_plan_id, at_cycle_end))
+        return "active"
 
 
 class FakeWebhookStore:
@@ -244,6 +257,45 @@ class RazorpayApiTests(unittest.TestCase):
         wrong = self.client.post(verify_path, json={"razorpay_payment_id": PAY_ID,
                                                     "razorpay_signature": "0" * 64}, headers=self.auth())
         self.assertEqual(wrong.status_code, 400)
+
+    def test_cancel_only_workspace_owner_and_wait_for_verified_provider_webhook(self):
+        base = f"/api/v1/workspaces/{WORKSPACE_A}/billing/subscriptions"
+        first = self.client.post(base,
+                                 json={"plan_code": "starter", "idempotency_key": "cancel-at-cycle-end-1"},
+                                 headers=self.auth())
+        self.assertEqual(first.status_code, 201)
+        endpoint = base + f"/{INTENT_ID}/cancel"
+        self.assertEqual(self.client.post(endpoint, headers=self.auth("good-b")).status_code, 404)
+        self.assertEqual(self.gateway.cancellations, [])
+        result = self.client.post(endpoint, headers=self.auth())
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["status"], "cancellation_requested")
+        self.assertTrue(result.json()["at_cycle_end"])
+        self.assertTrue(result.json()["entitlement_pending_webhook"])
+        self.assertEqual(self.gateway.cancellations, [(SUB_ID, PLAN_ID, True)])
+        row = next(iter(self.billing.rows.values()))
+        row["status"] = "cancelled"
+        finished = self.client.post(endpoint, headers=self.auth())
+        self.assertEqual(finished.status_code, 200)
+        self.assertEqual(finished.json()["status"], "already_ended")
+        self.assertEqual(len(self.gateway.cancellations), 1)
+
+    def test_provider_cancel_uses_only_validated_subscription_id(self):
+        gateway = RazorpayGateway(settings())
+        with patch.object(gateway, "_request", return_value={
+            "id": SUB_ID, "plan_id": PLAN_ID, "status": "active"}) as request:
+            status = gateway.cancel_subscription(subscription_id=SUB_ID,
+                                                 provider_plan_id=PLAN_ID,
+                                                 at_cycle_end=True)
+        self.assertEqual(status, "active")
+        self.assertEqual(request.call_args.args[0:2], ("POST", "subscriptions/" + SUB_ID + "/cancel"))
+        self.assertEqual(request.call_args.args[2], {"cancel_at_cycle_end": True})
+        with self.assertRaises(BillingRejected):
+            gateway.cancel_subscription(subscription_id="../untrusted", provider_plan_id=PLAN_ID)
+        with patch.object(gateway, "_request", return_value={
+            "id": SUB_ID, "plan_id": "plan_wrongplan12", "status": "active"}):
+            with self.assertRaises(BillingUnavailable):
+                gateway.cancel_subscription(subscription_id=SUB_ID, provider_plan_id=PLAN_ID)
 
     def test_webhook_requires_valid_hmac_and_is_replay_safe(self):
         path = "/api/v1/billing/razorpay/webhook"

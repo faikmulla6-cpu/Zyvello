@@ -99,3 +99,40 @@ draft PR #1 remains unmerged.
 **Highest next task:** verified, repeatable real Razorpay TEST subscription
 lifecycle with a captured charge, signed webhook, renewal, failure, expiration,
 cancellation, and entitlement switch observed through the real staging API.
+
+## 12 November addendum: direct Razorpay TEST provider audit
+
+A short-lived, **read-only** diagnostic ran on Modal using existing restricted
+staging secrets and made GET requests directly to Razorpay's TEST API. It
+printed no key, provider ID, payment ID, customer contact or payment details.
+It did not create a new subscription or charge any card.
+
+Verified results:
+
+- The configured Agency TEST plan matched the provider's plan period, interval,
+  currency and price.
+- The one existing provider subscription was found by its already stored
+  server-side ID; both Razorpay and Neon record one payment, and both show
+  the subscription **cancelled**.
+- Razorpay Payments API independently confirmed the associated payment was
+  **captured**, denominated INR, and matched the locally recorded plan amount.
+- The signed webhook ledger contains charge, activation and cancellation
+  events, but raw signature proof is not retained; do not claim a new webhook
+  was generated during this audit.
+- The staging entitlement remains **false** for the cancelled subscription;
+  no free user gained paid access through these read-only checks.
+- A self-service TEST cancellation endpoint now lets only the owner request
+  cancellation at billing-cycle end. The provider's signed webhook remains
+  the authority for final cancellation status and entitlement, not the
+  browser's confirmation.
+
+**Not yet evidenced:** a fresh new-user checkout completed end-to-end, provider
+triggered renewal and failed-charge simulations from Razorpay Test Dashboard,
+refund/dispute flows, and a real old-JWT replay. Razorpay documents that
+Test Dashboard's “Charge this now” simulates successful and failed renewals;
+an ordinary backend GET cannot replace that provider action.
+
+Provider references:
+- https://razorpay.com/docs/payments/subscriptions/test/
+- https://razorpay.com/docs/api/payments/subscriptions/cancel-subscription/
+- https://razorpay.com/docs/api/payments/

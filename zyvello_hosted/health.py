@@ -422,6 +422,31 @@ def create_app(
                          body.razorpay_payment_id)
         return {"authorization_verified": True, "entitlement_pending_webhook": True}
 
+    @app.post("/api/v1/workspaces/{workspace_id}/billing/subscriptions/{subscription_id}/cancel")
+    async def cancel_billing_subscription(workspace_id: UUID, subscription_id: UUID,
+                                          identity=Depends(verified_identity),
+                                          billing: tuple = Depends(ready_billing)):
+        api, gateway = billing
+        sub = await store_call(api.get_manageable_subscription, identity.user_id,
+                               workspace_id, subscription_id)
+        if sub["status"] in ("cancelled", "completed", "expired"):
+            return {"status": "already_ended", "entitlement_pending_webhook": False}
+        if not sub["provider_subscription_id"]:
+            raise HTTPException(409, "Subscription is awaiting provider reconciliation")
+        try:
+            provider_status = await asyncio.to_thread(
+                gateway.cancel_subscription,
+                subscription_id=sub["provider_subscription_id"],
+                provider_plan_id=sub["provider_plan_id"],
+                at_cycle_end=True,
+            )
+        except BillingRejected:
+            raise HTTPException(400, "Invalid cancellation request") from None
+        except BillingUnavailable:
+            raise HTTPException(503, "Cancellation status could not be confirmed; contact support") from None
+        return {"status": "cancellation_requested", "provider_status": provider_status,
+                "at_cycle_end": True, "entitlement_pending_webhook": True}
+
     @app.post("/api/v1/billing/razorpay/webhook")
     async def razorpay_webhook(request: Request,
                               x_razorpay_signature: str | None = Header(default=None),
