@@ -19,7 +19,7 @@ STABLE
 SECURITY DEFINER
 SET search_path TO pg_catalog
 AS $$
-    SELECT zyvello.is_workspace_manager(p_workspace_id)
+    SELECT zyvello.is_workspace_member(p_workspace_id)
        AND EXISTS (
            SELECT 1
              FROM zyvello.billing_subscriptions AS b
