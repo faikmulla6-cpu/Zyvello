@@ -83,8 +83,8 @@ const Hero2 = () => {
                 { label: "Business owners", href: "#use-cases" },
               ]} />
               <NavItem label="Products" href="#workflow" items={[
-                { label: "Lead discovery", href: "#workflow" },
-                { label: "Outreach & replies", href: "#workflow" },
+                { label: "Contact management", href: "#workflow" },
+                { label: "Campaign drafts", href: "#workflow" },
               ]} />
               <NavItem label="Resources" href="#resources" />
               <NavItem label="Pricing" href="#pricing" />

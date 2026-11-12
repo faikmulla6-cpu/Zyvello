@@ -72,14 +72,14 @@ const DemoOne = () => (
     <section id="resources" className="section-wrap border-t border-white/10">
       <p className="eyebrow">Getting started</p><h2 className="section-title">A few things to know.</h2>
       <div className="landing-faq mt-8 space-y-3">
-        <details className="py-6"><summary className="cursor-pointer font-medium">How do I open the local dashboard?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">Choose Open dashboard to go straight to your workspace. Start the local app with <code>the local dashboard launcher</code> and open the address it prints. Your existing setup is available there.</p></details>
+        <details className="py-6"><summary className="cursor-pointer font-medium">How do I get started?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">Create a free account and open your private business workspace. A paid TEST subscription currently unlocks manual contact and campaign planning in the hosted beta. Live payment collection is not enabled.</p></details>
         <details className="py-6"><summary className="cursor-pointer font-medium">Can this hosted version send emails?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">No. Contact management and campaign planning are available in the hosted preview. Outbound sending, automated AI outreach and reply handling are not enabled.</p></details>
-        <details className="py-6"><summary className="cursor-pointer font-medium">Which email providers can I use?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">The local edition supports Gmail, Microsoft 365, SMTP and IMAP mailboxes, and the existing Instantly integration. Connect your provider through the dashboard or CLI setup.</p></details>
+        <details className="py-6"><summary className="cursor-pointer font-medium">Can I connect a mailbox in this hosted beta?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">No. Hosted sending and mailbox integrations are disabled. We will clearly announce when supported mailbox and automation features pass their security and deliverability checks.</p></details>
       </div>
     </section>
     <HelpSection />
     <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-5 border-t border-white/10 px-5 py-8 text-sm md:px-8">
-      <a href="/welcome" className="inline-flex items-center gap-2.5 text-lg font-semibold"><BrandIcon />Zyvello</a><p className="text-gray-500">Lead discovery, outreach, and replies.</p><a href="/" className="inline-flex items-center gap-2">Open dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
+      <a href="/welcome" className="inline-flex items-center gap-2.5 text-lg font-semibold"><BrandIcon />Zyvello</a><p className="text-gray-500">Hosted contact management and campaign planning preview.</p><a href="/" className="inline-flex items-center gap-2">Open dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
     </footer>
   </div>
 );
