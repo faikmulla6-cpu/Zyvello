@@ -18,6 +18,8 @@ type Job = {
 type BillingPlan = {
   code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number;
   taxes: "additional_if_applicable"; test_checkout_available: boolean; live_checkout_available: boolean;
+  limits: { stored_contacts: number; stored_campaign_drafts: number; workspace_members_including_owner: number };
+  available_features: string[]; unavailable_features: string[];
 };
 type BillingSubscription = {
   id: string; plan_code: string; status: string; checkout_verified: boolean;
@@ -269,7 +271,9 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
         {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
           {plans.map(plan => <div className="rounded-2xl border border-white/15 bg-black/20 p-4" key={plan.code}>
             <p className="font-medium">{plan.name}</p>
-            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ month, plus applicable taxes</span></p>
+            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ month, before applicable tax review</span></p>
+            <p className="mt-2 text-xs text-gray-300">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
+            <p className="mt-1 text-xs text-gray-500">Manual workspace tools only; AI and outbound sending are not enabled.</p>
             {!plan.test_checkout_available && <p className="mt-2 text-xs text-amber-200">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
             <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-40" type="button"
               disabled={!owner || !plan.test_checkout_available || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}

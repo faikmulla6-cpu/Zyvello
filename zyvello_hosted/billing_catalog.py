@@ -15,6 +15,9 @@ class ApprovedMonthlyTier:
     code: str
     name: str
     amount_paise: int
+    max_contacts: int
+    max_campaign_drafts: int
+    max_members: int
 
     def public(self, *, test_checkout_available: bool = False) -> dict[str, Any]:
         return {
@@ -27,13 +30,26 @@ class ApprovedMonthlyTier:
             "taxes": "additional_if_applicable",
             "test_checkout_available": test_checkout_available,
             "live_checkout_available": False,
+            "limits": {
+                "stored_contacts": self.max_contacts,
+                "stored_campaign_drafts": self.max_campaign_drafts,
+                "workspace_members_including_owner": self.max_members,
+            },
+            "available_features": [
+                "Manual contact management", "Campaign draft planning",
+                "Workspace health checks", "Workspace member access",
+            ],
+            "unavailable_features": [
+                "Automatic lead discovery", "AI-generated content",
+                "Outbound email sending", "Reply handling and autonomous sales agents",
+            ],
         }
 
 
 APPROVED_MONTHLY_TIERS: dict[str, ApprovedMonthlyTier] = {
-    "starter": ApprovedMonthlyTier("starter", "Starter", 49_900),
-    "growth": ApprovedMonthlyTier("growth", "Growth", 149_900),
-    "business": ApprovedMonthlyTier("business", "Business", 399_900),
+    "starter": ApprovedMonthlyTier("starter", "Starter", 49_900, 100, 5, 1),
+    "growth": ApprovedMonthlyTier("growth", "Growth", 149_900, 400, 20, 3),
+    "business": ApprovedMonthlyTier("business", "Business", 399_900, 1000, 50, 10),
 }
 
 # A future, unshipped capability. Not a sellable Razorpay plan or promise of

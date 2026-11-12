@@ -103,21 +103,21 @@ const Hero2 = () => {
         <main>
           <section aria-labelledby="hero-title" className="mx-auto max-w-7xl px-5 pt-14 text-center md:px-8 md:pt-20">
             <a href="#workflow" className="mx-auto flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-medium backdrop-blur-sm sm:text-sm">
-              Your next customer starts with a conversation
+              Organize your next customer conversations
               <ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" />
             </a>
             <h1 id="hero-title" className="mx-auto mt-8 max-w-4xl text-5xl font-semibold leading-[1.08] tracking-[-0.055em] text-white md:text-6xl lg:text-7xl">
-              Describe your business.<br className="hidden sm:block" /> Let your outreach begin.
+              Put your contacts<br className="hidden sm:block" /> and plans in one place.
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-gray-300 md:text-lg">
-              Find the right companies, write emails that mean something, and keep replies moving.
-              Zyvello brings your sales workflow into one place.
+              Manage contacts and campaign drafts in a private business workspace.
+              Hosted AI outreach and automated sending are planned, not enabled.
             </p>
             <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
               <a href="/signup" className="button-light gap-2">Create your account <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
               <a href="#product-preview" className="button-outline gap-2">Explore the workflow <ArrowDown aria-hidden="true" className="h-4 w-4" /></a>
             </div>
-            <p className="mt-4 text-xs text-gray-400">Local edition available · Hosted subscription planned</p>
+            <p className="mt-4 text-xs text-gray-400">Hosted beta · Monthly test checkout · No live payments or email sending yet</p>
 
             <figure id="product-preview" className="relative mx-auto mb-0 mt-14 max-w-6xl scroll-mt-6 md:mt-20">
               <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-3xl bg-white opacity-10 blur-[7rem]" />

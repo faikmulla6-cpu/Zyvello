@@ -17,9 +17,18 @@ do not constitute approval for real-money charging or a public launch.
 - The amount is the **base price**, with applicable taxes to be determined
   and shown before a live purchase. No representation about whether GST
   is inclusive/exclusive is made beyond the base-price distinction.
-- Final feature bundles, user seats, campaign/lead volumes, AI credit costs,
-  e-mail sending allowances and fair-use quotas are **not yet decided**.
-  Do not advertise unstaged features as working premium benefits.
+- **Hosted beta commercial allowances, per paid workspace**:
+  Starter = 100 stored contacts / 5 campaign drafts / 1 seat;
+  Growth = 400 stored contacts / 20 campaign drafts / 3 seats;
+  Business = 1,000 stored contacts / 50 campaign drafts / 10 seats.
+  Seats include the workspace owner. These are storage/seat ceilings at a
+  time, NOT monthly newly acquired leads, generation credits or email sends.
+  SQL migration 0012 implements these boundaries. They become a customer
+  promise only after migration 0012 and the corrected public landing ship.
+- Currently available hosted tools are manually created contacts, campaign
+  drafts, private workspace and safe health diagnostics. **AI execution,
+  lead discovery, outbound emails, replies and autonomous sales are off**.
+  No AI credits, sending volumes or external data are included.
 - AI Employee is neither a currently sellable tier nor a promise that
   autonomous outreach is enabled.
 - Refunds, support, taxes/invoices and cancellation terms require their own
@@ -54,9 +63,11 @@ do not constitute approval for real-money charging or a public launch.
    in the merchant dashboard and provide their IDs through the existing
    secure staging configuration. Never replace secret values in code.
 2. Confirm all three display prices with the merchant provider response.
-3. Run a fresh signed TEST checkout, renewal success/failure, cancellation,
-   tax/invoice and refund/dispute simulations and verify entitlement
-   transitions with real authenticated QA accounts.
-4. Obtain approval on plan quotas, annual options, applicable tax handling,
-   merchant/account compliance and published cancellation/refund policy.
+3. A real signed TEST checkout and captured webhook already passed for the
+   Growth tier in staging. Next verify provider-driven recurring failure,
+   delayed cancellation, taxes/invoices and refunds/disputes without
+   modifying an existing subscriber's active mandate.
+4. Plan contact/draft/seat limits are selected and being implemented.
+   Obtain approval on applicable tax handling, merchant/account compliance,
+   legal identity, support contacts and published cancellation/refund policy.
 5. Only after those steps, separately authorize a live-payment deployment.

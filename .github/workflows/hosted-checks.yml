@@ -90,3 +90,9 @@ jobs:
           TEST_POSTGRES_API_URL: postgresql://zyvello_api_staging:ci-local-only@localhost:5432/postgres
           TEST_POSTGRES_WORKER_URL: postgresql://zyvello_worker_staging:ci-local-only@localhost:5432/postgres
         run: python hosted/ci/rls_paid_gates.py
+      - name: Verify approved Starter/Growth/Business quotas and team-seat RLS
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:ci-local-only@localhost:5432/postgres
+          TEST_POSTGRES_API_URL: postgresql://zyvello_api_staging:ci-local-only@localhost:5432/postgres
+          TEST_POSTGRES_WORKER_URL: postgresql://zyvello_worker_staging:ci-local-only@localhost:5432/postgres
+        run: python hosted/ci/rls_plan_quotas.py

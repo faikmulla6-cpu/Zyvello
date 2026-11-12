@@ -183,6 +183,11 @@ class WorkspaceManagementMixin:
             self._require_workspace(cursor, workspace_id)
             self._require_workspace_manager(cursor, workspace_id)
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 4))", (str(workspace_id),))
+            cursor.execute(
+                "SELECT zyvello.is_api_workspace_within_limit(%s,'member') AS allowed",
+                (workspace_id,))
+            if not cursor.fetchone()["allowed"]:
+                raise StoreLimit("Team-seat limit reached or subscription inactive")
             cursor.execute("""
                 SELECT count(*) AS n FROM zyvello.workspace_invitations
                 WHERE workspace_id=%s AND accepted_at IS NULL

@@ -29,6 +29,20 @@ class ApprovedPricingTests(unittest.TestCase):
         self.assertEqual(FUTURE_AI_EMPLOYEE["starting_at_amount_paise"], 999_900)
         self.assertTrue(all(item["live_checkout_available"] is False
                             for item in public_monthly_catalog()))
+        self.assertEqual(
+            [item["limits"] for item in public_monthly_catalog()],
+            [
+                {"stored_contacts":100, "stored_campaign_drafts":5,
+                 "workspace_members_including_owner":1},
+                {"stored_contacts":400, "stored_campaign_drafts":20,
+                 "workspace_members_including_owner":3},
+                {"stored_contacts":1000, "stored_campaign_drafts":50,
+                 "workspace_members_including_owner":10},
+            ],
+        )
+        for tier in public_monthly_catalog():
+            self.assertIn("Outbound email sending", tier["unavailable_features"])
+            self.assertIn("AI-generated content", tier["unavailable_features"])
 
     def test_only_matching_provider_test_plan_is_checkout_ready(self):
         matching = settings().plans["starter"]

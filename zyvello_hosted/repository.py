@@ -189,9 +189,11 @@ class HostedStore(WorkspaceManagementMixin):
             with self.transaction(auth_user_id) as cursor:
                 self._require_workspace(cursor, workspace_id)
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 2))", (str(workspace_id),))
-                cursor.execute("SELECT count(*) AS n FROM zyvello.contacts WHERE workspace_id=%s", (workspace_id,))
-                if cursor.fetchone()["n"] >= MAX_CONTACTS_PER_WORKSPACE:
-                    raise StoreLimit("Contact limit reached for private beta")
+                cursor.execute(
+                    "SELECT zyvello.is_api_workspace_within_limit(%s,'contact') AS allowed",
+                    (workspace_id,))
+                if not cursor.fetchone()["allowed"]:
+                    raise StoreLimit("Stored contact limit reached for this subscription plan")
                 cursor.execute("""
                     INSERT INTO zyvello.contacts
                         (workspace_id, full_name, email, company, created_by_auth_user_id)
@@ -220,9 +222,11 @@ class HostedStore(WorkspaceManagementMixin):
         with self.transaction(auth_user_id) as cursor:
             self._require_workspace(cursor, workspace_id)
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))", (str(workspace_id),))
-            cursor.execute("SELECT count(*) AS n FROM zyvello.campaigns WHERE workspace_id=%s", (workspace_id,))
-            if cursor.fetchone()["n"] >= MAX_CAMPAIGNS_PER_WORKSPACE:
-                raise StoreLimit("Draft campaign limit reached for private beta")
+            cursor.execute(
+                "SELECT zyvello.is_api_workspace_within_limit(%s,'campaign') AS allowed",
+                (workspace_id,))
+            if not cursor.fetchone()["allowed"]:
+                raise StoreLimit("Campaign draft limit reached for this subscription plan")
             cursor.execute("""
                 INSERT INTO zyvello.campaigns
                     (workspace_id, name, goal, created_by_auth_user_id)
