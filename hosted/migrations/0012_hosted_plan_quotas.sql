@@ -10,13 +10,23 @@ END $$;
 
 CREATE OR REPLACE FUNCTION zyvello.is_api_workspace_within_limit(
     p_workspace_id uuid, p_kind text)
-RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+RETURNS boolean LANGUAGE plpgsql VOLATILE SECURITY DEFINER
 SET search_path TO pg_catalog AS $$
 DECLARE
     v_plan text;
     v_max integer;
     v_used bigint;
 BEGIN
+    IF p_kind NOT IN ('contact','campaign','member') OR p_kind IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    -- Serialize SQL-level quota checks, not only the application's own
+    -- INSERT transactions. VOLATILE sees rows inserted earlier in a bulk
+    -- statement, so one multi-row INSERT cannot silently exceed a cap.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        p_workspace_id::text,
+        CASE p_kind WHEN 'contact' THEN 2 WHEN 'campaign' THEN 3 ELSE 4 END
+    ));
     IF NOT zyvello.is_workspace_member(p_workspace_id)
        OR NOT zyvello.is_api_workspace_entitled(p_workspace_id) THEN
         RETURN FALSE;

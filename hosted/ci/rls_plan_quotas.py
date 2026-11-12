@@ -65,7 +65,7 @@ class PlanQuotaSqlTests(unittest.TestCase):
                 SELECT %s, 'Quota testing', 'synthetic-' || n || '@example.test',
                        'test-auth-a'
                   FROM generate_series(1,200) n
-                LIMIT GREATEST(0, 100-(SELECT count(*) FROM zyvello.contacts
+                LIMIT GREATEST(0, 99-(SELECT count(*) FROM zyvello.contacts
                                                WHERE workspace_id=%s))
             """,(WORKSPACE,WORKSPACE))
             admin.execute("""
@@ -73,9 +73,46 @@ class PlanQuotaSqlTests(unittest.TestCase):
                   (workspace_id,name,created_by_auth_user_id)
                 SELECT %s, 'Quota campaign ' || n, 'test-auth-a'
                 FROM generate_series(1,50) n
-                LIMIT GREATEST(0, 5-(SELECT count(*) FROM zyvello.campaigns
+                LIMIT GREATEST(0, 4-(SELECT count(*) FROM zyvello.campaigns
                                               WHERE workspace_id=%s))
             """,(WORKSPACE,WORKSPACE))
+        # A direct multi-row API-role INSERT must not bypass the cap by
+        # evaluating every RLS predicate against the original statement
+        # snapshot. The attempted two rows should roll back atomically.
+        self.assertTrue(self.allowed("test-auth-a","contact"))
+        self.assertTrue(self.allowed("test-auth-a","campaign"))
+        with self.assertRaises(InsufficientPrivilege):
+            with psycopg.connect(API) as conn, conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+                conn.execute("""
+                  INSERT INTO zyvello.contacts
+                    (workspace_id,full_name,email,created_by_auth_user_id)
+                  SELECT %s,'Bulk bypass','bulk-'||n||'@example.test','test-auth-a'
+                  FROM generate_series(1,2) n
+                """,(WORKSPACE,))
+        with self.assertRaises(InsufficientPrivilege):
+            with psycopg.connect(API) as conn, conn.transaction():
+                conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+                conn.execute("""
+                  INSERT INTO zyvello.campaigns
+                    (workspace_id,name,created_by_auth_user_id)
+                  SELECT %s,'Bulk bypass '||n,'test-auth-a'
+                  FROM generate_series(1,2) n
+                """,(WORKSPACE,))
+        self.assertTrue(self.allowed("test-auth-a","contact"))
+        self.assertTrue(self.allowed("test-auth-a","campaign"))
+        with psycopg.connect(API) as conn, conn.transaction():
+            conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+            conn.execute("""
+              INSERT INTO zyvello.contacts
+                (workspace_id,full_name,email,created_by_auth_user_id)
+              VALUES (%s,'Final seat','final-cap@example.test','test-auth-a')
+            """,(WORKSPACE,))
+            conn.execute("""
+              INSERT INTO zyvello.campaigns
+                (workspace_id,name,created_by_auth_user_id)
+              VALUES (%s,'Final campaign cap','test-auth-a')
+            """,(WORKSPACE,))
         self.assertFalse(self.allowed("test-auth-a","contact"))
         self.assertFalse(self.allowed("test-auth-a","campaign"))
         with self.assertRaises(InsufficientPrivilege):
