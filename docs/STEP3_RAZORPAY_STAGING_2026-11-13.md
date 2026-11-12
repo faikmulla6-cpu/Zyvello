@@ -41,12 +41,15 @@ a **separate** migration version 11, not draft PR #2's conflicting version
 3. Hosted API uses **the same database entitlement predicate** to ensure
    the HTTP gate and SQL write gate agree; billing list computes the same
    conditions.
-4. Hosted dashboard adds an explicit two-step owner-only TEST subscription
+4. A halted subscription is treated as recoverable and blocks a second
+   checkout to prevent double recurring charges while payment recovery is
+   unresolved.
+5. Hosted dashboard adds an explicit two-step owner-only TEST subscription
    cancellation control, never requesting immediate cancellation and never
    assuming the browser has changed subscription state. Status messages
    distinguish pending, halted, creating, cancelled, expired and active
    but unverified subscriptions.
-5. Added a disposable PostgreSQL CI security suite testing free access
+6. Added a disposable PostgreSQL CI security suite testing free access
    denied, paid access granted (synthetic only), cross-tenant denial,
    cancellation revocation and expiration revocation. Added a regression
    for old captured-charge events arriving after a newer pending event.

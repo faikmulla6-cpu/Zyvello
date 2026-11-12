@@ -243,7 +243,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
             {sub.paid_through && <p className="mt-1 text-xs text-gray-400">Recorded period end: {new Date(sub.paid_through).toLocaleDateString()}</p>}
             {sub.status === "creating" && <p className="mt-2 text-xs text-amber-200">The provider response is not confirmed. Contact support before starting another checkout.</p>}
-            {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-amber-200">Payment recovery is needed. Paid tools remain locked until Razorpay confirms an active, paid period.</p>}
+            {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-amber-200">Payment recovery is needed. Paid tools remain locked, and a second checkout is blocked to prevent duplicate recurring subscriptions.</p>}
             {sub.status === "active" && !sub.entitled && <p className="mt-2 text-xs text-amber-200">Payment confirmation or the paid period is missing. No access has been granted.</p>}
             {["cancelled", "completed", "expired"].includes(sub.status) && <p className="mt-2 text-xs text-gray-400">This subscription is no longer active; it does not unlock premium tools.</p>}
             {owner && !["creating", "cancelled", "completed", "expired"].includes(sub.status) && <div className="mt-3">
@@ -264,7 +264,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             <p className="font-medium">{plan.name}</p>
             <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ {plan.interval} {plan.period}</span></p>
             <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-40" type="button"
-              disabled={!owner || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired", "halted"].includes(sub.status))}
+              disabled={!owner || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
               onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : "Try test checkout"}</button>
           </div>)}
         </div>}

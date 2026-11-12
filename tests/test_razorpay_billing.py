@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
@@ -17,7 +18,8 @@ from zyvello_hosted.razorpay_billing import (
     BillingRejected, BillingUnavailable, BillingSettings, Plan, RazorpayGateway,
     parse_verified_webhook, verify_checkout_signature, verify_webhook_signature,
 )
-from zyvello_hosted.repository import StoreNotFound
+from zyvello_hosted.billing_store import BillingApiStore
+from zyvello_hosted.repository import StoreConflict, StoreNotFound
 
 
 SUB_ID = "sub_12345678901234"
@@ -126,6 +128,49 @@ class RazorpayCryptoTests(unittest.TestCase):
         self.assertEqual(sub, SUB_ID)
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args_list[1].args[:2], ("POST", "subscriptions"))
+
+
+class HaltedRenewalReservationTests(unittest.TestCase):
+    def test_halted_subscription_cannot_start_a_second_recurring_plan(self):
+        """Halted is recoverable; a new plan could otherwise double-charge."""
+        class Cursor:
+            def __init__(self):
+                self.last = None
+                self.inserted = False
+
+            def execute(self, sql, params=None):
+                normal = " ".join(sql.split())
+                if "INSERT INTO zyvello.billing_subscriptions" in normal:
+                    self.inserted = True
+                    raise AssertionError("Duplicate provider subscription intent created")
+                if "SELECT 1 FROM zyvello.workspaces" in normal:
+                    self.last = {"exists": 1}
+                elif "SELECT 1 FROM zyvello.memberships" in normal:
+                    self.last = {"exists": 1}
+                elif "idempotency_key=%s" in normal:
+                    self.last = None
+                elif "status IN" in normal:
+                    # The fixture has one recoverable halted subscription.
+                    self.last = {"exists": 1} if "'halted'" in normal else None
+                else:
+                    self.last = None
+                return self
+
+            def fetchone(self):
+                return self.last
+
+        class Store(BillingApiStore):
+            @contextmanager
+            def transaction(self, auth_user_id):
+                self.cursor = Cursor()
+                yield self.cursor
+
+        store = Store("postgresql://example.invalid/ci-only")
+        with self.assertRaises(StoreConflict):
+            store.reserve_subscription("test-auth-a", UUID(WORKSPACE_A),
+                                       plan=settings().plans["starter"],
+                                       idempotency_key="stalled-renewal-1234")
+        self.assertFalse(store.cursor.inserted)
 
 
 class FakeBillingApi:

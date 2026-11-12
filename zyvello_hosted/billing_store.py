@@ -54,7 +54,7 @@ class BillingApiStore(HostedStore):
                 return {**previous, "created": False}
             cursor.execute("""
                 SELECT 1 FROM zyvello.billing_subscriptions WHERE workspace_id=%s
-                  AND status IN ('creating','created','authenticated','active','pending','paused')
+                  AND status IN ('creating','created','authenticated','active','pending','paused','halted')
                 LIMIT 1
             """, (workspace_id,))
             if cursor.fetchone():
