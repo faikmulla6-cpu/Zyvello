@@ -253,9 +253,18 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
 
   const refreshWorkspaces = useCallback(async () => {
     const result = await requestApi<{ workspaces: Workspace[] }>("/api/v1/workspaces");
-    setWorkspaces(result.workspaces);
-    setActiveWorkspace(current => current && result.workspaces.some(workspace => workspace.id === current)
-      ? current : result.workspaces[0]?.id || "");
+    let rows = result.workspaces;
+    // Verified new accounts get one free private workspace automatically.
+    // The POST is idempotent, including across reloads and parallel tabs.
+    if (rows.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES === "true") {
+      const created = await requestApi<{ workspace: Workspace; created: boolean }>("/api/v1/workspaces/bootstrap", {
+        method: "POST", body: JSON.stringify({}),
+      });
+      rows = [created.workspace];
+    }
+    setWorkspaces(rows);
+    setActiveWorkspace(current => current && rows.some(workspace => workspace.id === current)
+      ? current : rows[0]?.id || "");
   }, []);
 
   useEffect(() => {

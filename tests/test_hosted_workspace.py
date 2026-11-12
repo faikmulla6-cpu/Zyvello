@@ -202,7 +202,10 @@ class HostedWorkspaceApiTests(unittest.TestCase):
             path = getattr(route, "path", "")
             if "/api/v1/workspaces/{workspace_id}/" not in path:
                 continue
-            if "/billing" in path or path.endswith("/entitlement"):
+            # Workspace identity, settings, members and invitations are
+            # free account-management features, not operational automation.
+            if ("/billing" in path or path.endswith("/entitlement")
+                    or "/members" in path or "/invitations" in path):
                 continue
             protected += 1
             self.assertTrue(any(getattr(item.call, "__name__", "") == "require_paid_workspace"

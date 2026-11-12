@@ -12,7 +12,7 @@ import modal
 app = modal.App("zyvello-staging")
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1")
+    .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1", "tzdata>=2025.2")
     .add_local_python_source("zyvello_hosted")
     # Deploy the reviewed public hosted build, not the stale checked-in preview.
     # Run frontend 'npm run build:hosted' with staging flags before deploying.

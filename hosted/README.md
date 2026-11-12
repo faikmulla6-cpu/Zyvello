@@ -1,5 +1,10 @@
 # Zyvello hosted SaaS — staging runbook and launch gates
 
+**Workspace management increment (2026-11-12):** see
+[`docs/WORKSPACE_BACKEND_2026-11-12.md`](../docs/WORKSPACE_BACKEND_2026-11-12.md).
+Migration `0010_workspace_management.sql` is applied only to an isolated
+Neon test branch and is NOT deployed to active staging.
+
 Status: **private-beta staging deployed, not customer-production-ready** (2026-11-11).
 
 **Current gate ledger:** see
