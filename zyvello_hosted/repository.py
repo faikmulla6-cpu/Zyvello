@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 from uuid import UUID, uuid4
 
+from .workspace_management import WorkspaceManagementMixin
+
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,62}$")
 MAX_WORKSPACES_PER_USER = 3
@@ -41,7 +43,7 @@ class StoreLimit(Exception):
     pass
 
 
-class HostedStore:
+class HostedStore(WorkspaceManagementMixin):
     def __init__(self, dsn: str) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("A PostgreSQL connection URL is required")
@@ -84,7 +86,7 @@ class HostedStore:
     def list_workspaces(self, auth_user_id: str) -> list[dict[str, Any]]:
         with self.transaction(auth_user_id) as cursor:
             cursor.execute("""
-                SELECT w.id, w.slug, w.name, m.role, w.created_at
+                SELECT w.id, w.slug, w.name, w.settings, m.role, w.created_at
                 FROM zyvello.workspaces AS w
                 JOIN zyvello.memberships AS m ON m.workspace_id=w.id
                 WHERE m.auth_user_id=%s
@@ -139,7 +141,7 @@ class HostedStore:
                     VALUES (%s, %s, 'owner')
                 """, (workspace_id, auth_user_id))
                 cursor.execute("""
-                    SELECT w.id, w.slug, w.name, m.role, w.created_at
+                    SELECT w.id, w.slug, w.name, w.settings, m.role, w.created_at
                     FROM zyvello.workspaces w JOIN zyvello.memberships m ON m.workspace_id=w.id
                     WHERE w.id=%s AND m.auth_user_id=%s
                 """, (workspace_id, auth_user_id))
@@ -153,7 +155,7 @@ class HostedStore:
     def get_workspace(self, auth_user_id: str, workspace_id: UUID) -> dict[str, Any]:
         with self.transaction(auth_user_id) as cursor:
             cursor.execute("""
-                SELECT w.id, w.slug, w.name, m.role, w.created_at
+                SELECT w.id, w.slug, w.name, w.settings, m.role, w.created_at
                 FROM zyvello.workspaces w JOIN zyvello.memberships m ON m.workspace_id=w.id
                 WHERE w.id=%s AND m.auth_user_id=%s
             """, (workspace_id, auth_user_id))

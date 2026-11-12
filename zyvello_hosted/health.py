@@ -7,7 +7,7 @@ single-tenant SQLite state manager. Neither is safe to expose as a hosted SaaS.
 import asyncio
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -15,7 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from ipaddress import ip_address
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
 from .credentials import CredentialConfigurationError, CredentialVault
@@ -30,6 +33,71 @@ from .session_guard import NeonSessionGuard
 class CreateWorkspaceRequest(BaseModel):
     slug: str = Field(min_length=3, max_length=63, pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     name: str = Field(min_length=1, max_length=200)
+
+
+class WorkspaceSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    industry: str = Field(default="", max_length=100)
+    website_url: str = Field(default="", max_length=300, pattern=r"^$|^https://[^\s/]+(?:/[^\s]*)?$")
+    timezone: str = Field(default="Asia/Kolkata", min_length=3, max_length=64)
+
+    @field_validator("website_url")
+    @classmethod
+    def public_website_only(cls, value: str) -> str:
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        if (parsed.scheme != "https" or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or not host
+                or host == "localhost" or host.endswith(".localhost")
+                or not host.isascii()):
+            raise ValueError("Use a public HTTPS business website without credentials")
+        try:
+            if parsed.port not in (None, 443):
+                raise ValueError("Custom ports are not permitted")
+        except ValueError:
+            raise ValueError("Invalid website port") from None
+        try:
+            address = ip_address(host)
+        except ValueError:
+            if "." not in host or host.startswith(".") or host.endswith("."):
+                raise ValueError("A public domain is required") from None
+        else:
+            if not address.is_global:
+                raise ValueError("Private network addresses are not permitted")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise ValueError("Use an IANA timezone such as Asia/Kolkata") from None
+        return value
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    settings: WorkspaceSettings | None = None
+
+
+class WorkspaceInvitationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    role: Literal["admin", "member"] = "member"
+
+
+class AcceptWorkspaceInvitationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=32, max_length=128)
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["admin", "member"]
 
 
 class EnqueueJobRequest(BaseModel):
@@ -237,6 +305,70 @@ def create_app(
     async def get_workspace(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         row = await store_call(db.get_workspace, identity.user_id, workspace_id)
         return {"workspace": serialize_row(row)}
+
+    @app.post("/api/v1/workspaces/bootstrap")
+    async def bootstrap_workspace(identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        if not allow_workspace_creation:
+            raise HTTPException(403, "Workspace onboarding is not available on this deployment")
+        result = await store_call(db.bootstrap_workspace, identity.user_id)
+        return {"workspace": serialize_row(result["workspace"]), "created": result["created"]}
+
+    @app.delete("/api/v1/workspaces/{workspace_id}")
+    async def delete_empty_workspace(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)):
+        return await store_call(db.delete_empty_workspace, identity.user_id, workspace_id)
+
+    @app.patch("/api/v1/workspaces/{workspace_id}")
+    async def update_workspace(workspace_id: UUID, body: UpdateWorkspaceRequest,
+                               identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        settings = body.settings.model_dump(exclude_unset=True) if body.settings is not None else None
+        updated = await store_call(db.update_workspace, identity.user_id, workspace_id,
+                                   name=body.name, settings=settings)
+        return {"workspace": serialize_row(updated)}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/members")
+    async def list_workspace_members(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_workspace_members, identity.user_id, workspace_id)
+        return {"members": [serialize_row(row) for row in rows]}
+
+    @app.patch("/api/v1/workspaces/{workspace_id}/members/{member_id}")
+    async def change_member_role(workspace_id: UUID, member_id: UUID, body: UpdateMemberRoleRequest,
+                                 identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.set_member_role, identity.user_id, workspace_id, str(member_id),
+                               role=body.role)
+        return {"member": serialize_row(row)}
+
+    @app.delete("/api/v1/workspaces/{workspace_id}/members/{member_id}")
+    async def remove_workspace_member(workspace_id: UUID, member_id: UUID,
+                                      identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        result = await store_call(db.remove_workspace_member, identity.user_id, workspace_id, str(member_id))
+        return result
+
+    @app.get("/api/v1/workspaces/{workspace_id}/invitations")
+    async def list_workspace_invitations(workspace_id: UUID, identity=Depends(verified_identity),
+                                         db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_workspace_invitations, identity.user_id, workspace_id)
+        return {"invitations": [serialize_row(row) for row in rows]}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/invitations", status_code=201)
+    async def create_workspace_invitation(workspace_id: UUID, body: WorkspaceInvitationRequest,
+                                          identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        result = await store_call(db.create_workspace_invitation, identity.user_id, workspace_id,
+                                  email=body.email, role=body.role)
+        return {"invitation": serialize_row(result["invitation"]), "token": result["token"]}
+
+    @app.post("/api/v1/workspace-invitations/accept")
+    async def accept_workspace_invitation(body: AcceptWorkspaceInvitationRequest,
+                                          identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.accept_workspace_invitation, identity.user_id, body.token)
+        return {"workspace": serialize_row(row)}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/invitations/{invitation_id}/revoke")
+    async def revoke_workspace_invitation(workspace_id: UUID, invitation_id: UUID,
+                                          identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        row = await store_call(db.revoke_workspace_invitation, identity.user_id, workspace_id, invitation_id)
+        return {"invitation": serialize_row(row)}
 
     @app.get("/api/v1/workspaces/{workspace_id}/entitlement")
     async def get_workspace_entitlement(workspace_id: UUID, identity=Depends(verified_identity),
