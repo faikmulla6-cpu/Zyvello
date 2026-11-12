@@ -79,7 +79,8 @@ class SessionGuardApiTests(unittest.TestCase):
         with patch.dict(sys.modules, {"psycopg": SimpleNamespace(connect=lambda *a, **k: conn, Error=Exception)}):
             with self.assertRaises(StoreUnavailable):
                 guard(VerifiedIdentity("a", "a@example.test", 1800000000))
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(cursor.execute.call_args_list[0].args[0], "SET LOCAL statement_timeout = 4000")
 
 
 if __name__ == "__main__":

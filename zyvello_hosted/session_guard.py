@@ -26,9 +26,12 @@ class NeonSessionGuard:
 
         try:
             with psycopg.connect(
-                self._dsn, connect_timeout=5, options="-c statement_timeout=4000"
+                self._dsn, connect_timeout=5
             ) as conn:
                 with conn.cursor() as cursor:
+                    # Neon pooled connections reject startup options=-c...
+                    # but accept a transaction-scoped statement timeout.
+                    cursor.execute("SET LOCAL statement_timeout = 4000")
                     cursor.execute("SELECT current_user")
                     if cursor.fetchone()[0] != "zyvello_api_staging":
                         raise StoreUnavailable("Unexpected session-check database role")
