@@ -146,13 +146,17 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
     setFeedback("");
     setBillingError("");
     try {
-      const created = await requestApi<{
-        mode: "test"; key_id: string; subscription_id: string; intent_id: string;
-        status: "checkout_ready";
-      }>(`/api/v1/workspaces/${workspaceId}/billing/subscriptions`, {
+      const created = await requestApi<
+        { status: "pending_reconciliation" } |
+        { mode: "test"; key_id: string; subscription_id: string; intent_id: string; status: "checkout_ready" }
+      >(`/api/v1/workspaces/${workspaceId}/billing/subscriptions`, {
         method: "POST",
         body: JSON.stringify({ plan_code: plan.code, idempotency_key: crypto.randomUUID().replace(/-/g, "") }),
       });
+      if (created.status === "pending_reconciliation") {
+        setBillingError("This test checkout is awaiting provider reconciliation. Contact support before trying another payment.");
+        return;
+      }
       if (created.mode !== "test" || !created.key_id.startsWith("rzp_test_") || !created.subscription_id.startsWith("sub_")) {
         throw new Error("Checkout safety check failed");
       }
