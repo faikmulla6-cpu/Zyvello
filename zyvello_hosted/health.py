@@ -24,6 +24,7 @@ from .razorpay_billing import (MAX_WEBHOOK_BODY_BYTES, BillingRejected, BillingS
                                BillingUnavailable, RazorpayGateway, parse_verified_webhook,
                                verify_checkout_signature, verify_webhook_signature)
 from .repository import HostedStore, StoreConflict, StoreForbidden, StoreLimit, StoreNotFound, StoreUnavailable, serialize_row
+from .session_guard import NeonSessionGuard
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -98,6 +99,7 @@ def create_app(
     credential_vault_override: CredentialVault | None = None,
     enable_ai_drafts_override: bool | None = None,
     allow_workspace_creation_override: bool | None = None,
+    session_guard_override: Callable | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Zyvello staging workspace API",
@@ -107,6 +109,8 @@ def create_app(
     )
     verifier = NeonTokenVerifier(auth_base_url) if auth_base_url else None
     store = store_override or (HostedStore(database_url) if database_url else None)
+    session_guard = (session_guard_override if session_guard_override is not None
+                     else NeonSessionGuard(database_url) if database_url else None)
     billing_api = billing_api_override or (BillingApiStore(database_url) if database_url else None)
     billing_webhooks = billing_webhook_override or (BillingWebhookStore(billing_database_url) if billing_database_url else None)
     billing_settings = billing_settings_override or BillingSettings.from_env()
@@ -147,11 +151,15 @@ def create_app(
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(401, "A bearer token is required", headers={"WWW-Authenticate": "Bearer"})
         try:
-            return await asyncio.to_thread(verifier.verify, authorization[7:])
+            identity = await asyncio.to_thread(verifier.verify, authorization[7:])
+            if session_guard is not None:
+                if not await asyncio.to_thread(session_guard, identity):
+                    raise TokenRejected
+            return identity
         except TokenRejected:
-            raise HTTPException(401, "Invalid or unverified identity", headers={"WWW-Authenticate": "Bearer"}) from None
-        except IdentityProviderUnavailable:
-            raise HTTPException(503, "Identity provider is temporarily unavailable") from None
+            raise HTTPException(401, "Invalid, expired or revoked identity", headers={"WWW-Authenticate": "Bearer"}) from None
+        except (IdentityProviderUnavailable, StoreUnavailable):
+            raise HTTPException(503, "Identity verification is temporarily unavailable") from None
 
     def ready_store() -> HostedStore:
         if store is None:

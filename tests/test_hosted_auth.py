@@ -41,10 +41,13 @@ class HostedIdentityTests(unittest.TestCase):
         identity = self.verifier.verify(self.token())
         self.assertEqual(identity.user_id, "test-user-a")
         self.assertEqual(identity.email, "user@example.test")
+        self.assertEqual(identity.issued_at, self.now - 5)
 
     def test_fail_closed_for_unverified_wrong_origin_and_expired(self):
         cases = [
             self.token(emailVerified=False),
+            self.token(iat=True),
+            self.token(iat=0),
             self.token(aud="https://attacker.example.test"),
             self.token(iss="https://attacker.example.test"),
             self.token(exp=self.now - 120),

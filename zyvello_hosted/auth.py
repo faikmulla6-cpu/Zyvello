@@ -24,6 +24,7 @@ class IdentityProviderUnavailable(Exception):
 class VerifiedIdentity:
     user_id: str
     email: str
+    issued_at: int | None = None
 
 
 class NeonTokenVerifier:
@@ -67,15 +68,18 @@ class NeonTokenVerifier:
             )
             user_id = claims.get("sub")
             email = claims.get("email")
+            issued_at = claims.get("iat")
             if (
                 not isinstance(user_id, str)
                 or not user_id.strip()
                 or not isinstance(email, str)
                 or "@" not in email
                 or claims.get("emailVerified") is not True
+                or type(issued_at) is not int
+                or issued_at <= 0
             ):
                 raise TokenRejected
-            return VerifiedIdentity(user_id=user_id, email=email)
+            return VerifiedIdentity(user_id=user_id, email=email, issued_at=issued_at)
         except PyJWKClientConnectionError as cause:
             raise IdentityProviderUnavailable from cause
         except (InvalidTokenError, PyJWKClientError, ValueError, TypeError) as cause:
