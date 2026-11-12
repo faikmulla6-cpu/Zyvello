@@ -21,6 +21,7 @@ def event(kind, at, *, count=0, end=None, captured=False, amount=499900):
         "event_type": kind, "event_time": int(at.timestamp()),
         "paid_count": count, "period_end": int(end.timestamp()) if end else None,
         "captured": captured, "amount_paise": amount if captured else None,
+        "payment_id": "pay_12345678901234" if captured else None,
     }
 
 
@@ -43,6 +44,8 @@ class SubscriptionLifecycleTests(unittest.TestCase):
                     count=1, end=first_end)
         self.assertEqual((sub["status"], sub["paid_count"], sub["paid_through"]),
                          ("active", 1, first_end))
+        self.assertTrue(sub["payment_confirmed"])
+        self.assertEqual(sub["confirmed_payment_id"], "pay_12345678901234")
         sub = apply(sub, "subscription.charged", NOW + timedelta(days=30),
                     captured=True, count=2, end=second_end)
         self.assertEqual((sub["status"], sub["paid_count"], sub["paid_through"]),
@@ -98,6 +101,8 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         self.assertIsNone(sub["paid_through"])
         self.assertEqual(sub["paid_count"], 0)
         self.assertEqual(sub["status"], "created")
+        self.assertFalse(sub["payment_confirmed"])
+        self.assertIsNone(sub["confirmed_payment_id"])
 
 
 if __name__ == "__main__":

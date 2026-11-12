@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from .razorpay_billing import Plan
+from .razorpay_billing import PAYMENT_ID_RE, Plan
 from .repository import HostedStore, StoreConflict, StoreForbidden, StoreNotFound, StoreUnavailable
 
 
@@ -132,8 +132,13 @@ def reconcile_subscription_event(sub: dict[str, Any], event: dict[str, Any],
     creating synthetic charges against Razorpay or customer rows in Neon.
     """
     state = EVENT_STATUSES.get(event["event_type"])
-    captured = (event["event_type"] == "subscription.charged" and event["captured"]
-                and event["amount_paise"] == sub["amount_paise"])
+    captured = (event["event_type"] == "subscription.charged"
+                and event.get("captured") is True
+                and event.get("amount_paise") == sub["amount_paise"]
+                and type(event.get("paid_count")) is int and event["paid_count"] > 0
+                and type(event.get("period_end")) is int and event["period_end"] > 0
+                and isinstance(event.get("payment_id"), str)
+                and PAYMENT_ID_RE.fullmatch(event["payment_id"]) is not None)
     recent = sub["last_event_at"] is None or event_at > sub["last_event_at"]
     if not state or not (recent or captured):
         return None
@@ -150,7 +155,12 @@ def reconcile_subscription_event(sub: dict[str, Any], event: dict[str, Any],
             paid_through = next_end
         paid_count = max(paid_count, event["paid_count"])
     return {"status": status, "paid_through": paid_through, "paid_count": paid_count,
-            "last_event_at": event_at if recent else sub["last_event_at"]}
+            "last_event_at": event_at if recent else sub["last_event_at"],
+            # A signed, captured subscription charge is authoritative payment
+            # evidence even if the browser checkout callback never arrived.
+            # A failed/unauthorized/wrong-price event can never satisfy this.
+            "payment_confirmed": bool(captured),
+            "confirmed_payment_id": event.get("payment_id") if captured else None}
 
 
 class BillingWebhookStore:
@@ -197,10 +207,17 @@ class BillingWebhookStore:
                                 cursor.execute("""
                                     UPDATE zyvello.billing_subscriptions
                                        SET status=%s, paid_through=%s, paid_count=%s,
-                                           last_event_at=%s, updated_at=now()
+                                           last_event_at=%s,
+                                           checkout_verified=checkout_verified OR %s,
+                                           latest_checkout_payment_id=CASE
+                                               WHEN %s THEN %s
+                                               ELSE latest_checkout_payment_id END,
+                                           updated_at=now()
                                      WHERE id=%s
                                 """, (update["status"], update["paid_through"], update["paid_count"],
-                                      update["last_event_at"], sub["id"]))
+                                      update["last_event_at"], update["payment_confirmed"],
+                                      update["payment_confirmed"] and event["paid_count"] >= sub["paid_count"],
+                                      update["confirmed_payment_id"], sub["id"]))
                                 resolution = "applied"
                         cursor.execute("""
                             INSERT INTO zyvello.billing_webhook_events

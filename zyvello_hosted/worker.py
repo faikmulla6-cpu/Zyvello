@@ -104,7 +104,23 @@ class HostedWorker:
                 if cursor.rowcount != 1:
                     raise RuntimeError("Job lease was lost before completion")
 
+    def _entitled(self, workspace_id: UUID) -> bool:
+        """Trusted worker role sees a BOOLEAN only; no raw billing data."""
+        with self._connect() as conn:
+            with conn.transaction():
+                row = conn.execute(
+                    "SELECT zyvello.is_worker_workspace_entitled(%s) AS entitled",
+                    (workspace_id,),
+                ).fetchone()
+                if not row or type(row["entitled"]) is not bool:
+                    raise RuntimeError("Workspace entitlement could not be confirmed")
+                return row["entitled"]
+
     def _execute(self, job: dict[str, Any]) -> dict[str, Any]:
+        # The API check at enqueue is insufficient: a queued job may be run
+        # after the subscription expires, is cancelled, or is suspended.
+        if not self._entitled(job["workspace_id"]):
+            raise ValueError("Subscription is not active")
         if job["kind"] == "workspace_health":
             return {
                 "outcome": "workspace_queue_healthy",
@@ -152,9 +168,17 @@ class HostedWorker:
                 # Releasing the DB connection before the external HTTP call
                 # avoids holding row locks or consuming a Postgres connection.
                 encrypted = details.pop("ciphertext")
+        # Revalidate immediately before an external, potentially billable
+        # model request. Never run an AI job for an expired subscriber.
+        if not self._entitled(workspace_id):
+            raise ValueError("Subscription is not active")
         key = self._vault.open(encrypted)
         draft = self._groq.generate(api_key=key, contact_name=details["full_name"],
                                     company=details["company"], campaign_goal=details["goal"])
+        # The subscription may expire during generation; do not persist paid
+        # output once the workspace becomes unpaid.
+        if not self._entitled(workspace_id):
+            raise ValueError("Subscription expired during generation")
         with self._connect() as conn:
             with conn.transaction():
                 # A suppression may arrive while the model is processing.
