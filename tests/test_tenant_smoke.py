@@ -25,6 +25,8 @@ def fake_fetch(path, token, *, cross_leak=False, disabled_billing=False,
         requested = path.split("/")[4]
         if requested != own and not cross_leak:
             return 404, headers, {"detail": "Workspace not found"}
+        if path.endswith("/entitlement"):
+            return 200, headers, {"entitled": True}
         if disabled_billing and path.endswith("/billing"):
             return 503, headers, {"detail": "Test billing not configured"}
         return 200, headers, {}
@@ -41,7 +43,7 @@ class TenantAuthorizationSmokeTests(unittest.TestCase):
 
         checks, skipped = smoke.audit(record, "test-token-a", "test-token-b")
         self.assertEqual((checks, skipped), (28, 0))
-        self.assertEqual(len(paths), 32)  # identity + membership + own/cross requests
+        self.assertEqual(len(paths), 34)  # identity + membership + entitlement + own/cross requests
         self.assertTrue(all(path.startswith("/api/v1/") for path, _ in paths))
 
     def test_disabled_billing_is_explicitly_skipped_not_passed(self):
