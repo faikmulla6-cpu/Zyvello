@@ -20,6 +20,13 @@ BASE = os.environ.get(
     "https://zyvello--zyvello-staging-web.us-east.modal.run",
 ).rstrip("/")
 
+EXPECTED_PLANS = {
+    "starter": (49_900, 100, 5, 1),
+    "growth": (149_900, 400, 20, 3),
+    "business": (399_900, 1000, 50, 10),
+}
+LIMIT_FIELDS = ("stored_contacts", "stored_campaign_drafts", "workspace_members_including_owner")
+
 
 def get(path: str) -> tuple[int, dict, dict]:
     req = Request(BASE + path, headers={"Accept": "application/json"})
@@ -71,6 +78,24 @@ def main() -> int:
             and caps.get("payments_enabled") is False
             and caps.get("ai_enabled") is False,
         )
+        check("Razorpay Test Mode is configured", caps.get("razorpay_test_billing_ready") is True)
+        code, _, pricing = get("/api/v1/pricing")
+        plans = pricing.get("plans", [])
+        plan_limits = {
+            plan["code"]: (plan["amount_paise"], *(plan["limits"][field] for field in LIMIT_FIELDS))
+            for plan in plans
+        }
+        check(
+            "approved monthly prices and limits with live checkout disabled",
+            code == 200 and pricing.get("currency") == "INR"
+            and pricing.get("billing_cycle") == "monthly"
+            and pricing.get("live_payments_enabled") is False
+            and len(plans) == len(EXPECTED_PLANS) and plan_limits == EXPECTED_PLANS
+            and all(plan.get("live_checkout_available") is False for plan in plans),
+        )
+        code, policy_headers, _ = get("/subscription-policy")
+        robots = next((value for name, value in policy_headers.items() if name.lower() == "x-robots-tag"), "")
+        check("subscription policy route available and excluded from indexing", code == 200 and "noindex" in robots)
         login_code, login_html = get_text("/login")
         # Hosted staging is built with Vite --base / and deployed from
         # frontend/dist. A /static/landing bundle indicates a stale preview.
