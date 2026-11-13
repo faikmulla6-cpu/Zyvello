@@ -203,9 +203,11 @@ class HostedWorkspaceApiTests(unittest.TestCase):
             if "/api/v1/workspaces/{workspace_id}/" not in path:
                 continue
             # Workspace identity, settings, members and invitations are
-            # free account-management features, not operational automation.
+            # free account-management features. Managers can also inspect and
+            # disconnect Gmail after a subscription ends.
             if ("/billing" in path or path.endswith("/entitlement")
-                    or "/members" in path or "/invitations" in path):
+                    or "/members" in path or "/invitations" in path
+                    or (path.endswith("/gmail") and route.methods <= {"GET", "DELETE"})):
                 continue
             protected += 1
             self.assertTrue(any(getattr(item.call, "__name__", "") == "require_paid_workspace"

@@ -53,6 +53,7 @@ def process_jobs():
         # webhook DB role connection are supplied through Modal (not Hostinger).
         modal.Secret.from_name("zyvello-staging-billing"),
         draft_secret,
+        modal.Secret.from_name("zyvello-staging-gmail"),
     ],
 )
 @modal.asgi_app()

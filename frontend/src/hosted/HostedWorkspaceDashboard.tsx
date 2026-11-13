@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
+import { HostedGmailConnection, type GmailStatus } from "./HostedGmailConnection";
+import { gmailReturn } from "./gmail-return";
 import { HostedGroqConnection, type GroqStatus } from "./HostedGroqConnection";
 import { selectedPlan } from "./plan-selection";
 import { authClient } from "./auth-client";
@@ -570,7 +572,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     }
     setWorkspaces(rows);
     if (!rows.some(workspace => workspace.id === currentWorkspace.current)) {
-      changeWorkspace(rows[0]?.id || "");
+      changeWorkspace(rows.find(workspace => workspace.id === gmailReturn?.workspaceId)?.id || rows[0]?.id || "");
     }
   }, [changeWorkspace]);
 
@@ -658,6 +660,37 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
 
   const manager = workspaces.some(workspace =>
     workspace.id === activeWorkspace && (workspace.role === "owner" || workspace.role === "admin"));
+  const gmailPath = `/api/v1/workspaces/${activeWorkspace}/gmail`;
+  const [gmailCallback, setGmailCallback] = useState(gmailReturn);
+  const gmailCompletion = useRef<Promise<GmailStatus> | undefined>(undefined);
+  useEffect(() => {
+    if (!gmailCallback || loading) return;
+    if (gmailCallback.workspaceId !== activeWorkspace || !gmailCallback.code) {
+      setError("Gmail was not connected. Restart the connection in Settings.");
+      setGmailCallback(undefined);
+      return;
+    }
+    let active = true;
+    const { code, state } = gmailCallback;
+    gmailCompletion.current ??= requestApi<GmailStatus>(gmailPath + "/complete", {
+      method: "POST", body: JSON.stringify({ code, state }),
+    });
+    void gmailCompletion.current.then(() => {
+      if (active) setMessage("Gmail connected to this workspace.");
+    }).catch(cause => {
+      if (active) setError(cause instanceof Error ? cause.message : "Gmail could not be connected.");
+    }).finally(() => {
+      if (active) setGmailCallback(undefined);
+    });
+    return () => { active = false; };
+  }, [gmailCallback, activeWorkspace, loading, gmailPath]);
+
+  const loadGmail = useCallback(() => requestApi<GmailStatus>(gmailPath), [gmailPath]);
+  const beginGmail = useCallback(() => requestApi<{ authorization_url: string; state: string }>(gmailPath + "/begin", {
+    method: "POST",
+  }), [gmailPath]);
+  const disconnectGmail = useCallback(async () => { await requestApi(gmailPath, { method: "DELETE" }); }, [gmailPath]);
+  const sendGmailTest = useCallback(async () => { await requestApi(gmailPath + "/test", { method: "POST" }); }, [gmailPath]);
   const groqPath = `/api/v1/workspaces/${activeWorkspace}/credentials/groq`;
   const loadGroq = useCallback(() => requestApi<GroqStatus>(groqPath), [groqPath]);
   const saveGroq = useCallback((key: string) => requestApi<GroqStatus>(groqPath, {
@@ -840,7 +873,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
       {loading ? <p role="status" className="text-[var(--text-2)]">Loading your workspaces…</p> : <>
         {selected && <div className="flex flex-wrap items-center gap-3">
           <label className="text-sm font-medium" htmlFor="workspace-select">Workspace</label>
-          <select id="workspace-select" className="form-input max-w-sm" value={activeWorkspace} disabled={busy || acceptingInvite}
+          <select id="workspace-select" className="form-input max-w-sm" value={activeWorkspace} disabled={busy || acceptingInvite || Boolean(gmailCallback)}
             onChange={event => changeWorkspace(event.target.value)}>
             {workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.role})</option>)}
           </select>
@@ -867,12 +900,13 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
         )}
         {section === "settings" && selected && manager && entitlement === true &&
           <HostedGroqConnection key={selected.id} load={loadGroq} save={saveGroq} remove={removeGroq} />}
-        {section === "settings" && selected && <section className="card" aria-label="Outreach connections">
-          <h3 className="text-xl font-semibold">Outreach connections</h3>
-          <dl className="account-facts">
-            <div><dt>Gmail</dt><dd>Hosted mailbox connection pending</dd></div>
-            <div><dt>LinkedIn</dt><dd>Messaging API access pending</dd></div>
-          </dl>
+        {section === "settings" && selected && manager && (gmailCallback
+          ? <p role="status" className="card">Connecting Gmail…</p>
+          : <HostedGmailConnection key={selected.id} workspaceId={selected.id} entitled={entitlement === true}
+              load={loadGmail} begin={beginGmail} disconnect={disconnectGmail} sendTest={sendGmailTest} />)}
+        {section === "settings" && selected && <section className="card" aria-label="LinkedIn">
+          <h3 className="text-xl font-semibold">LinkedIn</h3>
+          <p className="muted mt-2">Messaging API access pending.</p>
         </section>}
         {section === "settings" && selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
         {section === "settings" && <details className="card">

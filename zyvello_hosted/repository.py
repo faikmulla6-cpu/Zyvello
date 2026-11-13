@@ -270,6 +270,88 @@ class HostedStore(WorkspaceManagementMixin):
             """, (workspace_id, campaign_id, contact_id))
             return {"created": bool(cursor.fetchone()), "contact_id": contact_id}
 
+    @classmethod
+    def _require_workspace_manager(cls, cursor: Any, workspace_id: UUID) -> None:
+        cls._require_workspace(cursor, workspace_id)
+        cursor.execute("SELECT zyvello.is_workspace_manager(%s) AS manager", (workspace_id,))
+        if not cursor.fetchone()["manager"]:
+            raise StoreForbidden("Only a workspace manager can manage the mailbox")
+
+    def gmail_status(self, auth_user_id: str, workspace_id: UUID) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT email, connected_at FROM zyvello.gmail_mailboxes WHERE workspace_id=%s",
+                           (workspace_id,))
+            return cursor.fetchone() or {"email": None, "connected_at": None}
+
+    def begin_gmail_connection(self, auth_user_id: str, workspace_id: UUID, *,
+                               state_hash: str, verifier_ciphertext: str) -> None:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 13))", (str(workspace_id),))
+            cursor.execute("""
+                INSERT INTO zyvello.gmail_oauth_attempts
+                    (workspace_id, auth_user_id, state_hash, verifier_ciphertext, expires_at)
+                VALUES (%s, %s, %s, %s, now() + interval '10 minutes')
+                ON CONFLICT (workspace_id) DO UPDATE SET
+                    auth_user_id=EXCLUDED.auth_user_id, state_hash=EXCLUDED.state_hash,
+                    verifier_ciphertext=EXCLUDED.verifier_ciphertext, expires_at=EXCLUDED.expires_at,
+                    consumed_at=NULL
+            """, (workspace_id, auth_user_id, state_hash, verifier_ciphertext))
+
+    def claim_gmail_connection(self, auth_user_id: str, workspace_id: UUID, *, state_hash: str) -> str:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("""
+                UPDATE zyvello.gmail_oauth_attempts SET consumed_at=now()
+                WHERE workspace_id=%s AND auth_user_id=%s AND state_hash=%s
+                    AND expires_at>now() AND consumed_at IS NULL
+                RETURNING verifier_ciphertext
+            """, (workspace_id, auth_user_id, state_hash))
+            row = cursor.fetchone()
+            if not row:
+                raise StoreConflict("This Gmail connection attempt expired or was already used. Try again.")
+            return row["verifier_ciphertext"]
+
+    def finish_gmail_connection(self, auth_user_id: str, workspace_id: UUID, *,
+                                state_hash: str, email: str, refresh_ciphertext: str) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 13))", (str(workspace_id),))
+            # DELETE locks the attempt and only the current connection can finish.
+            cursor.execute("""
+                DELETE FROM zyvello.gmail_oauth_attempts
+                WHERE workspace_id=%s AND auth_user_id=%s AND state_hash=%s AND consumed_at IS NOT NULL
+                    AND expires_at>now()
+                RETURNING workspace_id
+            """, (workspace_id, auth_user_id, state_hash))
+            if not cursor.fetchone():
+                raise StoreConflict("The Gmail connection attempt was replaced or cancelled. Try again.")
+            cursor.execute("DELETE FROM zyvello.gmail_mailboxes WHERE workspace_id=%s", (workspace_id,))
+            cursor.execute("""
+                INSERT INTO zyvello.gmail_mailboxes
+                    (workspace_id, email, refresh_ciphertext, connected_by_auth_user_id)
+                VALUES (%s,%s,%s,%s) RETURNING email, connected_at
+            """, (workspace_id, email, refresh_ciphertext, auth_user_id))
+            return cursor.fetchone()
+
+    def disconnect_gmail(self, auth_user_id: str, workspace_id: UUID) -> None:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 13))", (str(workspace_id),))
+            cursor.execute("DELETE FROM zyvello.gmail_oauth_attempts WHERE workspace_id=%s", (workspace_id,))
+            cursor.execute("DELETE FROM zyvello.gmail_mailboxes WHERE workspace_id=%s", (workspace_id,))
+
+    def reserve_gmail_self_test(self, auth_user_id: str, workspace_id: UUID) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT email, refresh_ciphertext FROM zyvello.reserve_gmail_self_test(%s)",
+                           (workspace_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise StoreConflict("Connect Gmail or wait five minutes before sending another test.")
+            return row
+
     def get_groq_credential_status(self, auth_user_id: str, workspace_id: UUID) -> dict[str, Any]:
         with self.transaction(auth_user_id) as cursor:
             # Membership and manager checks both occur in RLS; non-managers
