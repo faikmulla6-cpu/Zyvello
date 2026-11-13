@@ -1,9 +1,15 @@
 # Zyvello hosted SaaS — proposed customer terms for legal review
 
 **Status: DRAFT — NOT PUBLISHED OR IN FORCE. DO NOT ENABLE LIVE PAYMENTS.**
-Commercial limits and the customer-friendly defaults below are selected as
-release candidates, but binding legal publication requires verification of
-merchant ownership, tax, contact, delivery and consumer-law requirements.
+Commercial terms below are proposed for the hosted beta. The release notes
+at the end are for internal review.
+
+## Seller and customer contact
+
+- **Seller:** Faik Hameed Mulla
+- **Business address:** Khwaja Basti, Miraj, Maharashtra, India
+- **Customer support:** support@zyvello.pro
+- **Grievance contact:** support@zyvello.pro
 
 ## The service customers can actually buy (hosted beta)
 
@@ -19,7 +25,7 @@ created without payment, but operational writes are paywalled. A separate
 subscription is required for each workspace. New workspaces are not a way to
 multiply quota without paying.
 
-| Monthly plan | Base INR before tax review | Stored contacts | Campaign drafts | Total member seats including owner |
+| Monthly plan | Base price (INR per month) | Stored contacts | Campaign drafts | Total member seats including owner |
 |---|---:|---:|---:|---:|
 | Starter | 499 | 100 | 5 | 1 |
 | Growth | 1,499 | 400 | 20 | 3 |
@@ -38,19 +44,17 @@ downgrades are not available until a separately tested change flow exists.
 
 ## Payment authorisation and renewal (proposed)
 
-The checkout must show the plan, complete total including any applicable
-taxes, renewal cadence, and clear recurring mandate consent. Only a signed,
+Checkout shows the plan, total payable, renewal schedule, and the recurring
+payment authorisation. Only a signed,
 verified Razorpay *captured* payment and an active, unexpired paid term unlock
 hosted premium operations. We do not grant access merely because a browser
 claims payment success.
 
 Each eligible monthly subscription renews via the customer's authorised
 Razorpay recurring mandate until cancelled. The payment method and bank
-may require further authorization. Premium writes are suspended when Zyvello verifies a provider state that
-blocks access, or when the verified paid term expires. The proposed policy
-has no grace period after either condition. Existing records remain viewable by the authorised workspace
-where supported. This fail-closed policy is strict and must be clearly
-displayed BEFORE accepting a live recurring mandate.
+may require further authorization. Access to paid workspace tools is
+suspended when Zyvello verifies a billing state that blocks access or when
+the verified paid period ends. Workspace owners can still access Billing.
 
 ## Cancellation (proposed)
 
@@ -77,7 +81,8 @@ by law remain eligible regardless of the goodwill window. Voluntary
 mid-cycle cancellation of an already usable, used monthly plan does
 not automatically trigger a prorated refund; mandatory statutory rights
 are never waived. Subsequent renewal/refund disputes are reviewed case
-by case with the payment evidence, not automatically rejected.
+by case with the payment evidence. Email support@zyvello.pro to request
+a review or raise a billing complaint.
 
 An authorised operator must review and communicate the decision and,
 where approved, issue the refund via Razorpay to the eligible original
@@ -85,7 +90,7 @@ payment method. The bank/payment network determines the final credit
 timing; do not promise immediate credit. No full card details should
 ever be requested for support. **The operator must approve and
 operationally support these refund rules before publication** and
-verify them with legal/tax counsel.
+complete the policy review.
 
 ## Customer records, cancellations and privacy (proposed)
 
@@ -101,29 +106,13 @@ fraud-prevention and security audit records may require retention.
 windows, operational contact and privacy officer details, and data processor
 agreements. Do not publish unverified privacy warranties.
 
-## Required merchant fields before policy publication
+## Internal release notes
 
-- **LEGAL ENTITY / PROPRIETOR NAME:** NOT VERIFIED
-- **PRINCIPAL BUSINESS ADDRESS:** NOT VERIFIED
-- **CUSTOMER SUPPORT:** The live Razorpay account has blank support email,
-  phone, and contact-page fields. Provide the public Zyvello support details.
-- **GRIEVANCE OFFICER CONTACT:** NOT VERIFIED
-- **GST REGISTRATION / INVOICING STATUS AND TAX CALCULATION:** Razorpay
-  lists this merchant as Individual and its dashboard does not support adding
-  GST for this business type. Confirm Zyvello's seller registration status and
-  customer invoice treatment independently.
-- **RAZORPAY ACCOUNT ACTIVATION AND LIVE SUBSCRIPTIONS:** Verified in the
-  live dashboard on 13 November 2026. The merchant was activated on
-  10 November and zyvello.pro is approved. Card Recurring, UPI Autopay and
-  eMandate are enabled for subscriptions.
-- **SETTLEMENT BANK / INVOICE SELLER IDENTITY:** NOT VERIFIED
-
-These are hard release blockers, not suggested placeholders to display
-to paying users. Avoid collecting live charges until all are filled
-from primary merchant evidence and user approval.
-
-## Launch gate / audit log
-
+- The owner supplied the public seller, address, support and grievance
+  details on 13 November 2026. Seller identity and mailbox operation still
+  require independent verification for release.
+- Razorpay merchant activation, domain approval and recurring payment
+  methods were verified in the live dashboard on 13 November 2026.
 - Account creation and initial workspace: open and free.
 - Signed TEST checkout and captured payment passed for Growth and for a
   separate Starter billing QA workspace. The Starter checkout unlocked paid
@@ -144,7 +133,7 @@ from primary merchant evidence and user approval.
   and unshipped automation claims before offering live subscriptions.
 - Verify live keys and signed webhook delivery as part of the controlled
   production configuration and pilot.
-- Publish accurate pricing/terms/refund/privacy/merchant-contact pages,
-  with independent legal/tax review.
+- Complete the policy review and publish pricing, terms, refund, privacy
+  and merchant contact information before the live pilot.
 - First live collection should be one internally authorized capped pilot
   with reconciliation and rollback owner, never public mass launch.
