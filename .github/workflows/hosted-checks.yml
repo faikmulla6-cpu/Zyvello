@@ -96,3 +96,9 @@ jobs:
           TEST_POSTGRES_API_URL: postgresql://zyvello_api_staging:ci-local-only@localhost:5432/postgres
           TEST_POSTGRES_WORKER_URL: postgresql://zyvello_worker_staging:ci-local-only@localhost:5432/postgres
         run: python hosted/ci/rls_plan_quotas.py
+      - name: Verify the isolated Razorpay live pilot billing ledger
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:ci-local-only@localhost:5432/postgres
+          TEST_POSTGRES_API_URL: postgresql://zyvello_api_staging:ci-local-only@localhost:5432/postgres
+          TEST_POSTGRES_BILLING_URL: postgresql://zyvello_billing_staging:ci-local-only@localhost:5432/postgres
+        run: python hosted/ci/rls_live_billing.py

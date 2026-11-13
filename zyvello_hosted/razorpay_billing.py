@@ -1,9 +1,4 @@
-"""Fail-closed Razorpay Subscriptions adapter for Zyvello's *test* environment.
-
-Only the Razorpay key ID may reach Checkout. The key secret, webhook secret,
-prices, plan IDs and account mode are server-side configuration. This module
-deliberately refuses live keys until the launch review is complete.
-"""
+"""Razorpay Subscriptions with isolated test and live pilot settings."""
 
 from __future__ import annotations
 
@@ -16,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import UUID
 import base64
 
 
@@ -66,11 +62,17 @@ class BillingSettings:
     key_secret: str
     webhook_secret: str
     plans: dict[str, Plan]
+    workspace_id: UUID | None = None
+    checkout_enabled: bool = True
 
     @property
     def enabled(self) -> bool:
-        return bool(self.mode == "test" and self.key_id and self.key_secret
-                    and self.webhook_secret and self.plans)
+        return bool(
+            self.mode in ("test", "live")
+            and self.key_id.startswith(f"rzp_{self.mode}_")
+            and self.key_secret and self.webhook_secret and self.plans
+            and (self.mode == "test" or self.workspace_id is not None)
+        )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> BillingSettings:
@@ -79,7 +81,6 @@ class BillingSettings:
         if mode == "disabled":
             return cls("disabled", "", "", "", {})
         if mode != "test":
-            # Live-mode charging requires a separate, reviewed release.
             return cls("disabled", "", "", "", {})
         key_id = values.get("ZYVELLO_RAZORPAY_KEY_ID", "").strip()
         key_secret = values.get("ZYVELLO_RAZORPAY_KEY_SECRET", "")
@@ -113,6 +114,32 @@ class BillingSettings:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             # No public endpoint should accidentally expose malformed config.
             return cls("disabled", "", "", "", {})
+
+    @classmethod
+    def live_pilot_from_env(cls, env: Mapping[str, str] | None = None) -> BillingSettings:
+        values = os.environ if env is None else env
+        disabled = cls("disabled", "", "", "", {})
+        prefix = "ZYVELLO_RAZORPAY_LIVE_"
+        key_id = values.get(prefix + "KEY_ID", "").strip()
+        key_secret = values.get(prefix + "KEY_SECRET", "")
+        webhook_secret = values.get(prefix + "WEBHOOK_SECRET", "")
+        plan_id = values.get(prefix + "STARTER_PLAN_ID", "").strip()
+        try:
+            workspace = UUID(values.get(prefix + "WORKSPACE_ID", ""))
+            total_count = int(values.get(prefix + "TOTAL_COUNT", ""))
+        except ValueError:
+            return disabled
+        if (
+            not re.fullmatch(r"rzp_live_[A-Za-z0-9]+", key_id)
+            or not key_secret.strip() or not webhook_secret.strip()
+            or webhook_secret in (key_secret, values.get("ZYVELLO_RAZORPAY_WEBHOOK_SECRET"))
+            or not PLAN_ID_RE.fullmatch(plan_id)
+            or workspace.int == 0 or not 2 <= total_count <= 120
+        ):
+            return disabled
+        plan = Plan("starter", "Starter", 49_900, plan_id, "monthly", 1, total_count)
+        checkout_enabled = values.get(prefix + "CHECKOUT_ENABLED", "").strip().lower() == "true"
+        return cls("live", key_id, key_secret, webhook_secret, {"starter": plan}, workspace, checkout_enabled)
 
 
 def _require_hex_signature(signature: str) -> bool:
@@ -193,7 +220,7 @@ class RazorpayGateway:
 
     def __init__(self, settings: BillingSettings):
         if not settings.enabled:
-            raise BillingUnavailable("Test billing is not configured")
+            raise BillingUnavailable("Billing is not configured")
         self.settings = settings
 
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -243,11 +270,7 @@ class RazorpayGateway:
 
     def cancel_subscription(self, *, subscription_id: str, provider_plan_id: str,
                             at_cycle_end: bool = True) -> str:
-        """Owner-requested TEST cancellation; provider webhook remains authority.
-
-        Never allow URL injection, a browser-provided subscription identifier,
-        a different plan, or a request to charge real money.
-        """
+        """Request cancellation using a server-stored subscription and plan."""
         if (not SUBSCRIPTION_ID_RE.fullmatch(subscription_id)
             or not PLAN_ID_RE.fullmatch(provider_plan_id)
             or type(at_cycle_end) is not bool):

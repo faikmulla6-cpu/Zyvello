@@ -19,7 +19,8 @@ class ApprovedMonthlyTier:
     max_campaign_drafts: int
     max_members: int
 
-    def public(self, *, test_checkout_available: bool = False) -> dict[str, Any]:
+    def public(self, *, test_checkout_available: bool = False,
+               live_checkout_available: bool = False) -> dict[str, Any]:
         return {
             "code": self.code,
             "name": self.name,
@@ -29,7 +30,7 @@ class ApprovedMonthlyTier:
             "interval": 1,
             "taxes": "additional_if_applicable",
             "test_checkout_available": test_checkout_available,
-            "live_checkout_available": False,
+            "live_checkout_available": live_checkout_available,
             "limits": {
                 "stored_contacts": self.max_contacts,
                 "stored_campaign_drafts": self.max_campaign_drafts,
@@ -65,10 +66,10 @@ FUTURE_AI_EMPLOYEE = {
 }
 
 
-def approved_test_plan(configured_plan: Any, code: str) -> bool:
+def approved_monthly_plan(configured_plan: Any, code: str) -> bool:
     """Require an exact approved price and monthly cadence before checkout.
 
-    RazorpayGateway separately validates the *actual* test plan ID/currency
+    RazorpayGateway separately validates the *actual* plan ID/currency
     and amount against the provider before creating a subscription.
     """
     tier = APPROVED_MONTHLY_TIERS.get(code)
@@ -82,9 +83,12 @@ def approved_test_plan(configured_plan: Any, code: str) -> bool:
     )
 
 
+approved_test_plan = approved_monthly_plan
+
+
 def public_monthly_catalog(configured_plans: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     configured = configured_plans or {}
     return [
-        tier.public(test_checkout_available=approved_test_plan(configured.get(code), code))
+        tier.public(test_checkout_available=approved_monthly_plan(configured.get(code), code))
         for code, tier in APPROVED_MONTHLY_TIERS.items()
     ]

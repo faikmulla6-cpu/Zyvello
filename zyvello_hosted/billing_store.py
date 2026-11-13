@@ -30,7 +30,7 @@ class BillingApiStore(HostedStore):
             return cursor.fetchall()
 
     def reserve_subscription(self, auth_user_id: str, workspace_id: UUID, *,
-                             plan: Plan, idempotency_key: str) -> dict[str, Any]:
+                             plan: Plan, idempotency_key: str, provider_mode: str = "test") -> dict[str, Any]:
         if not 8 <= len(idempotency_key) <= 100:
             raise ValueError("Invalid billing idempotency key")
         with self.transaction(auth_user_id) as cursor:
@@ -43,30 +43,45 @@ class BillingApiStore(HostedStore):
                 raise StoreForbidden("Only the workspace owner can manage billing")
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 6))", (str(workspace_id),))
             cursor.execute("""
-                SELECT id, plan_code, status, provider_subscription_id
+                SELECT id, plan_code, status, provider_subscription_id, provider_plan_id, provider_mode
                 FROM zyvello.billing_subscriptions
                 WHERE workspace_id=%s AND idempotency_key=%s
             """, (workspace_id, idempotency_key))
             previous = cursor.fetchone()
             if previous:
-                if previous["plan_code"] != plan.code:
-                    raise StoreConflict("Idempotency key belongs to a different plan")
+                if (previous["plan_code"] != plan.code or previous["provider_mode"] != provider_mode
+                    or previous["provider_plan_id"] != plan.razorpay_plan_id):
+                    raise StoreConflict("Idempotency key belongs to a different billing configuration")
+                if provider_mode == "live" and previous["status"] not in ("creating", "created"):
+                    raise StoreConflict("This checkout is no longer available")
                 return {**previous, "created": False}
             cursor.execute("""
-                SELECT 1 FROM zyvello.billing_subscriptions WHERE workspace_id=%s
+                SELECT 1 FROM zyvello.billing_subscriptions
+                WHERE workspace_id=%s AND provider_mode<>%s LIMIT 1
+            """, (workspace_id, provider_mode))
+            if cursor.fetchone():
+                raise StoreConflict("Use a dedicated workspace for live billing")
+            cursor.execute("""
+                SELECT id, status, provider_subscription_id, provider_plan_id
+                FROM zyvello.billing_subscriptions WHERE workspace_id=%s
                   AND status IN ('creating','created','authenticated','active','pending','paused','halted')
                 LIMIT 1
             """, (workspace_id,))
-            if cursor.fetchone():
+            existing = cursor.fetchone()
+            if existing:
+                if (provider_mode == "live" and existing["status"] == "created"
+                    and existing["provider_plan_id"] == plan.razorpay_plan_id
+                    and existing["provider_subscription_id"]):
+                    return {**existing, "created": False}
                 raise StoreConflict("This workspace already has a subscription attempt; verify its status first")
             cursor.execute("""
                 INSERT INTO zyvello.billing_subscriptions
                   (workspace_id, plan_code, amount_paise, provider_plan_id,
-                   idempotency_key, created_by_auth_user_id)
-                VALUES (%s,%s,%s,%s,%s,%s)
+                   idempotency_key, created_by_auth_user_id, provider_mode)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id, plan_code, status, provider_subscription_id
             """, (workspace_id, plan.code, plan.amount_paise, plan.razorpay_plan_id,
-                  idempotency_key, auth_user_id))
+                  idempotency_key, auth_user_id, provider_mode))
             return {**cursor.fetchone(), "created": True}
 
     def finalize_subscription(self, auth_user_id: str, subscription_id: UUID,
@@ -77,7 +92,7 @@ class BillingApiStore(HostedStore):
             if not cursor.fetchone()["changed"]:
                 raise StoreConflict("Subscription intent could not be finalized")
             cursor.execute("""
-                SELECT id, plan_code, status, provider_subscription_id
+                SELECT id, plan_code, status, provider_subscription_id, provider_plan_id, provider_mode
                 FROM zyvello.billing_subscriptions WHERE id=%s
             """, (subscription_id,))
             result = cursor.fetchone()
@@ -90,7 +105,7 @@ class BillingApiStore(HostedStore):
         with self.transaction(auth_user_id) as cursor:
             self._require_workspace(cursor, workspace_id)
             cursor.execute("""
-                SELECT id, provider_subscription_id, status
+                SELECT id, provider_subscription_id, provider_plan_id, provider_mode, status
                 FROM zyvello.billing_subscriptions WHERE id=%s AND workspace_id=%s
             """, (subscription_id, workspace_id))
             row = cursor.fetchone()
@@ -110,7 +125,7 @@ class BillingApiStore(HostedStore):
             if not cursor.fetchone():
                 raise StoreForbidden("Only the workspace owner can manage billing")
             cursor.execute("""
-                SELECT id, provider_subscription_id, provider_plan_id, status
+                SELECT id, provider_subscription_id, provider_plan_id, provider_mode, status
                 FROM zyvello.billing_subscriptions
                 WHERE workspace_id=%s AND id=%s
             """, (workspace_id, subscription_id))
@@ -161,7 +176,14 @@ def reconcile_subscription_event(sub: dict[str, Any], event: dict[str, Any],
                 and type(event.get("period_end")) is int and event["period_end"] > 0
                 and isinstance(event.get("payment_id"), str)
                 and PAYMENT_ID_RE.fullmatch(event["payment_id"]) is not None)
+    if sub.get("provider_mode") == "live" and event["event_type"] == "subscription.charged" and not captured:
+        return None
     recent = sub["last_event_at"] is None or event_at > sub["last_event_at"]
+    if sub.get("provider_mode") == "live" and event_at == sub["last_event_at"]:
+        # Razorpay timestamps have second precision. Prefer a restrictive
+        # transition on ties, and allow the initial charge after authentication.
+        recent = state in {"pending", "halted", "paused", *TERMINAL_SUBSCRIPTION_STATUSES}
+        recent = recent or (captured and sub["status"] == "authenticated")
     if not state or not (recent or captured):
         return None
 
@@ -191,11 +213,14 @@ class BillingWebhookStore:
             raise ValueError("A PostgreSQL connection URL is required")
         self._dsn = dsn
 
-    def record(self, event: dict[str, Any]) -> str:
+    def record(self, event: dict[str, Any], *, provider_mode: str = "test",
+               workspace_id: UUID | None = None) -> str:
         """Deduplicate and reconcile in ONE transaction; never store raw PII."""
         import psycopg
         from psycopg.rows import dict_row
 
+        if provider_mode not in ("test", "live") or (provider_mode == "live" and workspace_id is None):
+            raise ValueError("Invalid webhook scope")
         event_at = datetime.fromtimestamp(event["event_time"], tz=timezone.utc)
         try:
             with psycopg.connect(self._dsn, connect_timeout=5, row_factory=dict_row) as conn:
@@ -206,18 +231,22 @@ class BillingWebhookStore:
                             raise StoreUnavailable("Unexpected billing database role")
                         # Serialize duplicate deliveries even on different HTTP workers.
                         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 7))",
-                                       (event["event_id"],))
-                        cursor.execute("SELECT resolution FROM zyvello.billing_webhook_events WHERE event_id=%s",
-                                       (event["event_id"],))
+                                       (f"{provider_mode}:{event['event_id']}",))
+                        cursor.execute("""
+                            SELECT resolution FROM zyvello.billing_webhook_events
+                            WHERE provider_mode=%s AND event_id=%s
+                        """, (provider_mode, event["event_id"]))
                         prior = cursor.fetchone()
                         if prior:
                             return "duplicate"
                         cursor.execute("""
                             SELECT id, provider_plan_id, amount_paise, status,
-                                   paid_count, paid_through, last_event_at
+                                   paid_count, paid_through, last_event_at, provider_mode
                             FROM zyvello.billing_subscriptions
-                            WHERE provider_subscription_id=%s FOR UPDATE
-                        """, (event["provider_subscription_id"],))
+                            WHERE provider_subscription_id=%s AND provider_mode=%s
+                              AND (%s::uuid IS NULL OR workspace_id=%s)
+                            FOR UPDATE
+                        """, (event["provider_subscription_id"], provider_mode, workspace_id, workspace_id))
                         sub = cursor.fetchone()
                         resolution = "unmatched"
                         if sub and sub["provider_plan_id"] != event["provider_plan_id"]:
@@ -243,9 +272,9 @@ class BillingWebhookStore:
                                 resolution = "applied"
                         cursor.execute("""
                             INSERT INTO zyvello.billing_webhook_events
-                                (event_id,event_type,provider_subscription_id,body_sha256,event_at,resolution)
-                            VALUES (%s,%s,%s,%s,%s,%s)
-                        """, (event["event_id"], event["event_type"],
+                                (provider_mode,event_id,event_type,provider_subscription_id,body_sha256,event_at,resolution)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        """, (provider_mode, event["event_id"], event["event_type"],
                               event["provider_subscription_id"], event["body_sha256"],
                               event_at, resolution))
                         return resolution

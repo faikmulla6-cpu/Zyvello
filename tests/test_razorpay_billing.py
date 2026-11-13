@@ -184,7 +184,7 @@ class FakeBillingApi:
             raise StoreNotFound("Workspace not found")
         return list(self.rows.values())
 
-    def reserve_subscription(self, user, workspace, *, plan, idempotency_key):
+    def reserve_subscription(self, user, workspace, *, plan, idempotency_key, provider_mode="test"):
         if user != "test-auth-a" or str(workspace) != WORKSPACE_A:
             raise StoreNotFound("Workspace not found")
         self.reservations += 1
@@ -192,7 +192,8 @@ class FakeBillingApi:
         if old:
             return {**old, "created": False}
         row = {"id": INTENT_ID, "plan_code": plan.code, "status": "creating",
-               "provider_subscription_id": None}
+               "provider_subscription_id": None, "provider_mode": provider_mode,
+               "provider_plan_id": plan.razorpay_plan_id}
         self.rows[idempotency_key] = row
         return {**row, "created": True}
 
@@ -235,8 +236,10 @@ class FakeGateway:
 class FakeWebhookStore:
     def __init__(self):
         self.events = set()
+        self.deliveries = []
 
-    def record(self, event):
+    def record(self, event, *, provider_mode="test", workspace_id=None):
+        self.deliveries.append((provider_mode, workspace_id, event))
         duplicate = event["event_id"] in self.events
         self.events.add(event["event_id"])
         return "duplicate" if duplicate else "applied"
@@ -359,6 +362,83 @@ class RazorpayApiTests(unittest.TestCase):
         self.assertEqual(self.client.post(path, data=body, headers=headers).status_code, 200)
         self.assertEqual(self.client.post(path, data=body, headers=headers).status_code, 200)
         self.assertEqual(len(self.webhooks.events), 1)
+
+    def live_client(self, *, checkout_enabled=False):
+        self.live_gateway = FakeGateway()
+        self.live_settings = BillingSettings.live_pilot_from_env({
+            "ZYVELLO_RAZORPAY_LIVE_KEY_ID": "rzp_live_ExampleOnly",
+            "ZYVELLO_RAZORPAY_LIVE_KEY_SECRET": "live_api_secret_fixture",
+            "ZYVELLO_RAZORPAY_LIVE_WEBHOOK_SECRET": "live_webhook_secret_fixture",
+            "ZYVELLO_RAZORPAY_LIVE_STARTER_PLAN_ID": PLAN_ID,
+            "ZYVELLO_RAZORPAY_LIVE_WORKSPACE_ID": WORKSPACE_A,
+            "ZYVELLO_RAZORPAY_LIVE_TOTAL_COUNT": "12",
+            "ZYVELLO_RAZORPAY_LIVE_CHECKOUT_ENABLED": str(checkout_enabled),
+        })
+        return TestClient(create_app(
+            auth_base_url="https://identity.example.test/db/auth", store_override=FakeStore(),
+            billing_settings_override=settings(), billing_api_override=self.billing,
+            billing_webhook_override=self.webhooks, billing_gateway_override=self.gateway,
+            live_billing_settings_override=self.live_settings,
+            live_billing_gateway_override=self.live_gateway,
+        ))
+
+    def test_live_catalog_is_private_and_checkout_defaults_off(self):
+        client = self.live_client()
+        base = f"/api/v1/workspaces/{WORKSPACE_A}/billing"
+        plans = client.get(base + "/plans", headers=self.auth()).json()
+        self.assertEqual(plans["mode"], "live")
+        self.assertEqual([(p["code"], p["amount_paise"], p["live_checkout_available"]) for p in plans["plans"]],
+                         [("starter", 49900, False)])
+        self.assertFalse(client.get("/api/v1/pricing").json()["live_payments_enabled"])
+        self.assertFalse(client.get("/api/v1/capabilities").json()["payments_enabled"])
+        self.assertEqual(client.post(base + "/subscriptions", headers=self.auth(),
+                                    json={"plan_code": "starter", "idempotency_key": "pilot-12345"}).status_code, 403)
+        self.assertEqual(self.live_gateway.calls, 0)
+
+    def test_live_checkout_routes_only_starter_to_live_gateway_and_callback_cannot_write(self):
+        client = self.live_client(checkout_enabled=True)
+        path = f"/api/v1/workspaces/{WORKSPACE_A}/billing/subscriptions"
+        body = {"plan_code": "starter", "idempotency_key": "pilot-12345"}
+        self.assertEqual(client.post(path, json=body).status_code, 401)
+        self.assertEqual(client.post(path, headers=self.auth("good-b"), json=body).status_code, 404)
+        self.assertEqual(client.post(path, headers=self.auth(), json={**body, "plan_code": "growth"}).status_code, 409)
+        other = path.replace(WORKSPACE_A, WORKSPACE_B)
+        client.post(other, headers=self.auth("good-b"), json=body)
+        self.assertEqual(self.live_gateway.calls, 0)
+        created = client.post(path, headers=self.auth(), json=body)
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["mode"], "live")
+        self.assertEqual(self.live_gateway.calls, 1)
+        self.assertEqual(self.gateway.calls, 0)
+        signature = hmac.new(self.live_settings.key_secret.encode(), f"{PAY_ID}|{SUB_ID}".encode(),
+                             hashlib.sha256).hexdigest()
+        verified = client.post(f"{path}/{INTENT_ID}/verify", headers=self.auth(),
+                               json={"razorpay_payment_id": PAY_ID, "razorpay_signature": signature})
+        self.assertEqual(verified.status_code, 200)
+        self.assertTrue(verified.json()["entitlement_pending_webhook"])
+        self.assertEqual(self.billing.marked, [])
+
+    def test_live_webhook_uses_separate_secret_and_workspace_even_with_checkout_off(self):
+        client = self.live_client()
+        test_path = "/api/v1/billing/razorpay/webhook"
+        live_path = test_path + "/live"
+        raw = event_body()
+        test_signature = hmac.new(settings().webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        live_signature = hmac.new(self.live_settings.webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        headers = {"x-razorpay-event-id": "evt_live_fixture"}
+        self.assertEqual(client.post(live_path, content=raw, headers={
+            **headers, "x-razorpay-signature": test_signature,
+        }).status_code, 400)
+        self.assertEqual(client.post(test_path, content=raw, headers={
+            **headers, "x-razorpay-signature": live_signature,
+        }).status_code, 400)
+        self.assertEqual(client.post(live_path, content=raw, headers={
+            **headers, "x-razorpay-signature": live_signature,
+        }).status_code, 200)
+        self.assertEqual(len(self.webhooks.deliveries), 1)
+        mode, workspace, event = self.webhooks.deliveries[0]
+        self.assertEqual((mode, workspace), ("live", UUID(WORKSPACE_A)))
+        self.assertTrue(event["captured"])
 
     def test_billing_is_disabled_by_default(self):
         disabled = TestClient(create_app(auth_base_url="https://identity.example.test/db/auth",

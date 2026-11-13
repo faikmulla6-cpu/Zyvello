@@ -49,8 +49,8 @@ def process_jobs():
         # payment-provider keys so owner configuration cannot overwrite it.
         modal.Secret.from_name("zyvello-staging-billing-db"),
         # Create this Secret with ZYVELLO_RAZORPAY_MODE=disabled first.
-        # Billing remains fail-closed until *test* keys and the restricted
-        # webhook DB role connection are supplied through Modal (not Hostinger).
+        # Put Razorpay settings and any live pilot configuration in this
+        # server-side secret. Live checkout defaults off.
         modal.Secret.from_name("zyvello-staging-billing"),
         draft_secret,
         modal.Secret.from_name("zyvello-staging-gmail"),
