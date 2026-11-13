@@ -1,6 +1,7 @@
 import { ArrowRight, Check, Search, FileText, Building2 } from "lucide-react";
 import { Hero2 } from "@/components/ui/hero-2-1";
 import { HelpSection } from "@/components/ui/help-section";
+import { planPage } from "@/hosted/plan-selection";
 import { BrandIcon } from "@/components/ui/brand-icon";
 
 const steps = [
@@ -50,18 +51,19 @@ const DemoOne = () => (
       </div>
       <div className="grid gap-4 sm:grid-cols-3 md:grid-cols-1 lg:grid-cols-3 md:col-span-1">
         {([
-          { code: "Starter", price: "₹499", contacts: "100", drafts: "5", seats: "1" },
-          { code: "Growth", price: "₹1,499", contacts: "400", drafts: "20", seats: "3" },
-          { code: "Business", price: "₹3,999", contacts: "1,000", drafts: "50", seats: "10" },
+          { code: "starter", name: "Starter", price: "₹499", contacts: "100", drafts: "5", seats: "1" },
+          { code: "growth", name: "Growth", price: "₹1,499", contacts: "400", drafts: "20", seats: "3" },
+          { code: "business", name: "Business", price: "₹3,999", contacts: "1,000", drafts: "50", seats: "10" },
         ] as const).map(plan => (
           <article className="landing-glass p-5" key={plan.code}>
-            <h3 className="font-medium">{plan.code}</h3>
+            <h3 className="font-medium">{plan.name}</h3>
             <p className="mt-4 text-2xl font-semibold">{plan.price}<span className="ml-1 text-xs font-normal text-gray-400">/mo</span></p>
             <ul className="mt-4 space-y-2 text-xs text-gray-300">
               {[plan.contacts+" stored contacts",plan.drafts+" campaign drafts",plan.seats+" workspace member(s)"].map(text =>
                 <li className="flex items-start gap-2" key={text}><Check aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400" />{text}</li>
               )}
             </ul>
+            {hosted && <a className="button-outline mt-5 w-full px-4" href={planPage("/signup", plan.code)}>Choose {plan.name}</a>}
           </article>
         ))}
       </div>

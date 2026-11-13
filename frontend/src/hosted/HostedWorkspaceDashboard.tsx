@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
+import { HostedGroqConnection, type GroqStatus } from "./HostedGroqConnection";
+import { selectedPlan } from "./plan-selection";
 import { authClient } from "./auth-client";
 import { HostedCommandDeck, readDeckSection, type DeckSection } from "./HostedCommandDeck";
 
@@ -14,6 +16,7 @@ type WorkspaceInvitation = {
 };
 type Contact = { id: string; full_name: string; email: string; company: string; created_at: string };
 type Campaign = { id: string; name: string; goal: string; status: "draft"; created_at: string };
+type GeneratedDraft = { id: string; campaign_id: string; contact_id: string; draft_text: string };
 type Job = {
   id: string;
   kind: string;
@@ -104,6 +107,7 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId: string; owner: boolean; onEntitlementChange: (paid: boolean) => void }) {
+  const requestedPlan = selectedPlan();
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<BillingSubscription[]>([]);
   const [enabled, setEnabled] = useState(false);
@@ -278,12 +282,15 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             </div>}
           </div>)}
         </div>
+        {requestedPlan && plans.some(plan => plan.code === requestedPlan) && (
+          <p className="mt-4 text-sm text-[var(--text-2)]">Selected on the pricing page: <strong>{plans.find(plan => plan.code === requestedPlan)?.name}</strong></p>
+        )}
         {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          {plans.map(plan => <div className="inset rounded-2xl p-4" key={plan.code}>
+          {plans.map(plan => <div className={`inset rounded-2xl p-4 ${requestedPlan === plan.code ? "outline outline-2 outline-[var(--accent)]" : ""}`} key={plan.code}>
             <p className="font-medium">{plan.name}</p>
             <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-[var(--text-3)]">/ month</span></p>
             <p className="mt-2 text-xs text-[var(--text-2)]">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
-            <p className="mt-1 text-xs text-[var(--text-3)]">Manual workspace tools only; AI and outbound sending are not enabled.</p>
+            <p className="mt-1 text-xs text-[var(--text-3)]">Includes contact management and campaign planning.</p>
             {!plan.test_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
             <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" type="button"
               disabled={!owner || !plan.test_checkout_available || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
@@ -475,7 +482,6 @@ const pendingSections: Partial<Record<DeckSection, string>> = {
   signals: "Hosted lead signals are in development.",
   discover: "Hosted prospect discovery is in development.",
   companies: "The company directory will be available when hosted prospect discovery is connected.",
-  controls: "Hosted campaign sending controls are in development.",
 };
 
 export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signingOut }: DashboardProps) {
@@ -489,6 +495,9 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   const [workspaceSlug, setWorkspaceSlug] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [acceptingInvite, setAcceptingInvite] = useState(false);
+  const [groqStatus, setGroqStatus] = useState<GroqStatus>();
+  const [draftTarget, setDraftTarget] = useState("");
+  const [generatedDrafts, setGeneratedDrafts] = useState<GeneratedDraft[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -516,6 +525,9 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     currentWorkspace.current = workspaceId;
     currentCampaign.current = "";
     setEntitlement(null);
+    setGroqStatus(undefined);
+    setDraftTarget("");
+    setGeneratedDrafts([]);
     setJobs([]);
     setContacts([]);
     setCampaigns([]);
@@ -536,6 +548,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     if (currentCampaign.current === campaignId) return;
     currentCampaign.current = campaignId;
     setCampaignContacts([]);
+    setDraftTarget("");
     setActiveCampaign(campaignId);
   }, []);
 
@@ -642,6 +655,56 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     });
     return () => { cancelled = true; };
   }, [activeWorkspace, entitlement, activeCampaign, refreshCampaignContacts]);
+
+  const manager = workspaces.some(workspace =>
+    workspace.id === activeWorkspace && (workspace.role === "owner" || workspace.role === "admin"));
+  const groqPath = `/api/v1/workspaces/${activeWorkspace}/credentials/groq`;
+  const loadGroq = useCallback(() => requestApi<GroqStatus>(groqPath), [groqPath]);
+  const saveGroq = useCallback((key: string) => requestApi<GroqStatus>(groqPath, {
+    method: "PUT", body: JSON.stringify({ api_key: key }),
+  }), [groqPath]);
+  const removeGroq = useCallback(async () => { await requestApi(groqPath, { method: "DELETE" }); }, [groqPath]);
+
+  const refreshDrafts = useCallback(async () => {
+    const result = await requestApi<{ drafts: GeneratedDraft[] }>(`/api/v1/workspaces/${activeWorkspace}/drafts`);
+    if (currentWorkspace.current === activeWorkspace) setGeneratedDrafts(result.drafts);
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (!activeWorkspace || entitlement !== true || section !== "campaigns") return;
+    let active = true;
+    setGroqStatus(undefined);
+    if (manager) {
+      void loadGroq().then(status => { if (active) setGroqStatus(status); }).catch(cause => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load the AI connection");
+      });
+    }
+    void refreshDrafts().catch(cause => {
+      if (active) setError(cause instanceof Error ? cause.message : "Could not load generated drafts");
+    });
+    return () => { active = false; };
+  }, [activeWorkspace, entitlement, section, manager, loadGroq, refreshDrafts]);
+
+  async function generateDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || entitlement !== true || !manager || !groqStatus?.configured ||
+      !groqStatus.ai_execution_enabled || !activeCampaign || !draftTarget) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await requestApi<{ dispatch_requested: boolean }>(`/api/v1/workspaces/${activeWorkspace}/drafts`, {
+        method: "POST", body: JSON.stringify({
+          campaign_id: activeCampaign, contact_id: draftTarget, idempotency_key: crypto.randomUUID(),
+        }),
+      });
+      setMessage(result.dispatch_requested ? "AI draft queued. Follow its progress in Activity." : "AI draft queued. Worker dispatch is pending.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not queue the draft");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function changeName(value: string) {
     setWorkspaceName(value);
@@ -802,8 +865,17 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
             setWorkspaces(current => current.map(workspace => workspace.id === updated.id ? updated : workspace))
           } />
         )}
+        {section === "settings" && selected && manager && entitlement === true &&
+          <HostedGroqConnection key={selected.id} load={loadGroq} save={saveGroq} remove={removeGroq} />}
+        {section === "settings" && selected && <section className="card" aria-label="Outreach connections">
+          <h3 className="text-xl font-semibold">Outreach connections</h3>
+          <dl className="account-facts">
+            <div><dt>Gmail</dt><dd>Hosted mailbox connection pending</dd></div>
+            <div><dt>LinkedIn</dt><dd>Messaging API access pending</dd></div>
+          </dl>
+        </section>}
         {section === "settings" && selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
-        {workspaceHome && <details className="card">
+        {section === "settings" && <details className="card">
           <summary className="cursor-pointer text-sm font-medium">Join a workspace with an invitation</summary>
           <form className="mt-4 space-y-3" onSubmit={event => void acceptInvitation(event)}>
             <label className="block text-sm text-[var(--text-2)]">Invitation code
@@ -881,6 +953,26 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
                   disabled={busy || !selectedContact} onClick={() => void assignContact()}>Attach to draft</button>
               </div>}
               <p className="text-xs text-[var(--text-3)]">Attached contacts: {campaignContacts.length}</p>
+              {manager && groqStatus?.ai_execution_enabled && !groqStatus.configured &&
+                <button className="btn btn-secondary" type="button" onClick={() => navigate("settings")}>Set up Groq</button>}
+              {manager && groqStatus?.ai_execution_enabled && groqStatus.configured && campaignContacts.length > 0 &&
+                <form className="space-y-3" onSubmit={event => void generateDraft(event)}>
+                  <label className="block text-sm" htmlFor="draft-target">Generate a draft for</label>
+                  <select className="form-input w-full" id="draft-target" required value={draftTarget}
+                    onChange={event => setDraftTarget(event.target.value)}>
+                    <option value="">Select an attached contact</option>
+                    {campaignContacts.map(contact => <option key={contact.id} value={contact.id}>{contact.full_name}</option>)}
+                  </select>
+                  <button className="btn btn-primary" type="submit" disabled={busy || !draftTarget}>Generate draft</button>
+                </form>}
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium">AI drafts</h3>
+                <button className="btn btn-secondary btn-sm" type="button"
+                  onClick={() => void refreshDrafts().catch(() => setError("Could not refresh generated drafts"))}>Refresh AI drafts</button>
+                {generatedDrafts.filter(draft => draft.campaign_id === activeCampaign).map(draft =>
+                  <p key={draft.id} className="inset whitespace-pre-wrap break-words rounded-xl p-4 text-sm">{draft.draft_text}</p>
+                )}
+              </div>
             </div>}
           </section>}
 
@@ -891,7 +983,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void runHealthCheck()}>{busy ? "Processing…" : "Run safe workspace check"}</button>
-            <span className="text-xs text-[var(--wait)]">AI and outbound email are disabled</span>
+
           </div>
           <div className="mt-6 space-y-3">
             {jobs.length === 0 ? <p className="text-sm text-[var(--text-3)]">No jobs yet. Run the safe check to test the queue.</p> : jobs.map(job => <div key={job.id} className="inset rounded-xl p-4">
@@ -901,6 +993,11 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
               {job.last_error && <p className="mt-2 text-xs text-[var(--bad)]">{job.last_error}</p>}
             </div>)}
           </div>
+        </section>}
+        {selected && section === "controls" && <section className="card" aria-label="Campaign controls">
+          <button type="button" className="btn btn-primary" disabled>Start outreach</button>
+          <p className="muted mt-3">Outreach requires a supported mailbox and a hosted sending worker.</p>
+          <button type="button" className="btn btn-secondary mt-3" onClick={() => navigate("settings")}>View connections</button>
         </section>}
         {selected && pendingSections[section] && <section className="card"><p>{pendingSections[section]}</p></section>}
         {selected && section === "usage" && <section className="card">

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { BrandIcon } from "@/components/ui/brand-icon";
 import { authClient, hostedSignUpEnabled } from "./auth-client";
+import { planPage, selectedPlan } from "./plan-selection";
 import { HostedWorkspaceDashboard } from "./HostedWorkspaceDashboard";
 
 type Account = { id: string; email: string; name?: string };
@@ -39,6 +40,10 @@ type EmailOtpAuth = {
 
 // Hosted sessions and workspace requests use Neon and the hosted API.
 export function HostedAuthPage({ page }: { page: Page }) {
+  const plan = selectedPlan();
+  const appPath = planPage("/app", plan);
+  const loginPath = planPage("/login", plan);
+  const signupPath = planPage("/signup", plan);
   const [account, setAccount] = useState<Account | null>(null);
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -112,7 +117,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
         else setError("Sign-in could not be confirmed. Please check browser cookie settings and retry.");
         return;
       }
-      window.location.assign("/app");
+      window.location.assign(appPath);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to authenticate. Please try again.");
     } finally {
@@ -136,7 +141,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
       if (session.error || !session.data?.session || !session.data?.user) {
         throw new Error("Login was accepted, but the session could not be confirmed. Please retry.");
       }
-      window.location.assign("/app");
+      window.location.assign(appPath);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to verify your login code.");
     } finally {
@@ -156,7 +161,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
       if (result.error) throw new Error(result.error.message || "The code could not be verified.");
       setOtp("");
       const session = await authClient.getSession();
-      window.location.replace(session.data?.session && session.data.user ? "/app" : "/login");
+      window.location.replace(session.data?.session && session.data.user ? appPath : loginPath);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to verify your code.");
     } finally {
@@ -246,15 +251,15 @@ export function HostedAuthPage({ page }: { page: Page }) {
             : page !== "app" && account ? <>
               <h1 className="text-3xl font-semibold">You're already signed in.</h1>
               <p className="mt-4 text-gray-300">{account.email}</p>
-              <a href="/app" className="button-light mt-6 w-full">Open beta account</a>
+              <a href={appPath} className="button-light mt-6 w-full">{plan ? "Continue to selected plan" : "Open workspace"}</a>
             </> : page === "app" ? <>
               <h1 className="text-3xl font-semibold">Sign in required</h1>
               <p className="mt-4 text-sm text-gray-300">A verified account is required before opening your workspace.</p>
-              <a href="/login" className="button-light mt-6 w-full">Go to login</a>
+              <a href={loginPath} className="button-light mt-6 w-full">Go to login</a>
             </> : isSignUp && !hostedSignUpEnabled ? <>
               <h1 className="text-3xl font-semibold">Private beta access</h1>
               <p className="mt-4 text-sm leading-6 text-gray-300">New accounts are currently invitation-only while we test workspace security. Public registration is not yet open.</p>
-              <a href="/login" className="button-light mt-6 w-full">Already invited? Log in</a>
+              <a href={loginPath} className="button-light mt-6 w-full">Already invited? Log in</a>
             </> : recovering && page === "login" ? <>
               <h1 className="text-3xl font-semibold">Recover your account.</h1>
               <p className="mt-3 text-sm text-gray-300">We will send a one-time code to your verified account email. Never share it.</p>
@@ -299,7 +304,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
               </form>
               {!isSignUp && <button type="button" className="mt-5 w-full text-center text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setLoginWithOtp(value => !value); setError(""); setMessage(""); }}>{loginWithOtp ? "Use an existing password instead" : "Use a one-time email code instead"}</button>}
               {!isSignUp && <button type="button" className="mt-3 w-full text-center text-sm text-gray-300 underline underline-offset-4" disabled={busy} onClick={() => { setRecovering(true); setRecoveryOtpSent(false); setOtp(""); setNewPassword(""); setError(""); setMessage(""); }}>Forgot your password? Reset it with email</button>}
-              <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "Need access?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? "/login" : "/signup"}>{isSignUp ? "Log in" : "Private beta details"}</a></p>
+              <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "Need access?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? loginPath : signupPath}>{isSignUp ? "Log in" : hostedSignUpEnabled ? "Create an account" : "Private beta details"}</a></p>
             </>}
           {message && <p role="status" className="mt-5 text-sm text-emerald-300">{message}</p>}
           {error && <p role="alert" className="mt-5 rounded-lg border border-rose-400/30 bg-rose-950/40 p-3 text-sm text-rose-200">{error}</p>}

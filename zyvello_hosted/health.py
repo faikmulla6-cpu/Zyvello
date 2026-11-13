@@ -11,6 +11,8 @@ from typing import Callable, Literal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
@@ -207,6 +209,12 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
         allow_credentials=False,
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def redact_credential_validation(request: Request, exc: RequestValidationError):
+        if request.method == "PUT" and request.url.path.endswith("/credentials/groq"):
+            return JSONResponse(status_code=422, content={"detail": "Invalid Groq API key"})
+        return await request_validation_exception_handler(request, exc)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -412,7 +420,8 @@ def create_app(
     async def groq_credential_status(workspace_id: UUID, identity=Depends(verified_identity),
                                      db: HostedStore = Depends(ready_store)):
         row = await store_call(db.get_groq_credential_status, identity.user_id, workspace_id)
-        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
+        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled,
+                "credential_storage_ready": credential_vault is not None}
 
     @app.put("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def save_groq_credential(workspace_id: UUID, body: PutGroqCredentialRequest,
@@ -424,7 +433,8 @@ def create_app(
         except (CredentialConfigurationError, ValueError):
             raise HTTPException(422, "Invalid provider credential") from None
         row = await store_call(db.put_groq_credential, identity.user_id, workspace_id, ciphertext=ciphertext)
-        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled}
+        return {"provider": "groq", **serialize_row(row), "ai_execution_enabled": ai_drafts_enabled,
+                "credential_storage_ready": credential_vault is not None}
 
     @app.delete("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def remove_groq_credential(workspace_id: UUID, identity=Depends(verified_identity),

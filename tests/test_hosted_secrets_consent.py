@@ -150,11 +150,18 @@ class HostedSecretsAndPermissionApiTests(unittest.TestCase):
 
     def test_invalid_secret_rejected_and_api_fails_without_vault(self):
         path = f"/api/v1/workspaces/{WS_A}/credentials/groq"
-        self.assertEqual(self.client.put(path, headers=self.header("a"),
-                                         json={"api_key": "not-a-groq-credential"}).status_code, 422)
+        for payload, secret in [
+            ({"api_key": "too-short-key"}, "too-short-key"),
+            ({"api_key": SAMPLE_KEY, "extra": "unexpected-secret"}, "unexpected-secret"),
+        ]:
+            response = self.client.put(path, headers=self.header("a"), json=payload)
+            self.assertEqual(response.status_code, 422)
+            self.assertNotIn(secret, response.text)
+        self.assertTrue(self.client.get(path, headers=self.header("a")).json()["credential_storage_ready"])
         with patch.dict("os.environ", {"ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS": ""}):
             missing_vault = TestClient(create_app(auth_base_url="https://auth.example.test/db/auth",
                                                   store_override=self.store, subscription_enforcement_override=False))
+        self.assertFalse(missing_vault.get(path, headers=self.header("a")).json()["credential_storage_ready"])
         self.assertEqual(missing_vault.put(path, headers=self.header("a"),
                                            json={"api_key": SAMPLE_KEY}).status_code, 503)
 
