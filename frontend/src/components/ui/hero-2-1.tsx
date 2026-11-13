@@ -23,6 +23,7 @@ function Brand() {
 }
 
 const Hero2 = () => {
+  const hosted = import.meta.env.VITE_ZYVELLO_HOSTED_MODE === "true";
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const menuPanel = useRef<HTMLDivElement>(null);
@@ -115,11 +116,11 @@ const Hero2 = () => {
             </p>
             <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
               <a href="/signup" className="button-light gap-2">Create your account <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
-              <a href="#product-preview" className="button-outline gap-2">Explore the workflow <ArrowDown aria-hidden="true" className="h-4 w-4" /></a>
+              <a href={hosted ? "#workflow" : "#product-preview"} className="button-outline gap-2">Explore the workflow <ArrowDown aria-hidden="true" className="h-4 w-4" /></a>
             </div>
             <p className="mt-4 text-xs text-gray-400">Hosted beta · Monthly test checkout · No live payments or email sending yet</p>
 
-            <figure id="product-preview" className="relative mx-auto mb-0 mt-14 max-w-6xl scroll-mt-6 md:mt-20">
+            {!hosted && <figure id="product-preview" className="relative mx-auto mb-0 mt-14 max-w-6xl scroll-mt-6 md:mt-20">
               <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-3xl bg-white opacity-10 blur-[7rem]" />
               <div className="relative overflow-hidden rounded-t-xl border border-white/20 bg-neutral-950 shadow-2xl">
                 <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3 text-[11px] text-gray-400">
@@ -131,7 +132,7 @@ const Hero2 = () => {
                   className="relative block h-auto w-full" width="1440" height="820" fetchPriority="high" />
               </div>
               <figcaption className="relative bg-black py-3 text-left text-xs text-gray-500">Illustrative workspace with sample data.</figcaption>
-            </figure>
+            </figure>}
           </section>
         </main>
       </div>

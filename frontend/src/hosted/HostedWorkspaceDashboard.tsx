@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, BriefcaseBusiness, CheckCircle2, CircleAlert, RefreshCw, ShieldCheck } from "lucide-react";
 import { authClient } from "./auth-client";
 
-type Workspace = { id: string; slug: string; name: string; role: string; created_at: string };
+type WorkspaceSettings = { industry: string; website_url: string; timezone: string };
+type Workspace = {
+  id: string; slug: string; name: string; role: string; created_at: string;
+  settings?: Partial<WorkspaceSettings>;
+};
+type WorkspaceMember = { auth_user_id: string; email: string | null; role: string };
+type WorkspaceInvitation = {
+  id: string; invitee_email: string; expires_at: string; accepted_at?: string | null; revoked_at?: string | null;
+};
 type Contact = { id: string; full_name: string; email: string; company: string; created_at: string };
 type Campaign = { id: string; name: string; goal: string; status: "draft"; created_at: string };
 type Job = {
@@ -88,8 +96,8 @@ async function requestApi<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(body?.detail || `Request failed (${response.status})`);
+    const body = await response.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(typeof body?.detail === "string" ? body.detail : `Request failed (${response.status})`);
   }
   return response.json() as Promise<T>;
 }
@@ -290,12 +298,177 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   );
 }
 
+function WorkspaceSettingsPanel({ workspace, onSaved }: { workspace: Workspace; onSaved: (workspace: Workspace) => void }) {
+  const [name, setName] = useState(workspace.name);
+  const [industry, setIndustry] = useState(workspace.settings?.industry ?? "");
+  const [website, setWebsite] = useState(workspace.settings?.website_url ?? "");
+  const [timezone, setTimezone] = useState(workspace.settings?.timezone ?? "Asia/Kolkata");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+    setMessage("");
+    setError("");
+    if (!name.trim() || !timezone.trim()) {
+      setError("Enter a business name and timezone.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await requestApi<{ workspace: Workspace }>(`/api/v1/workspaces/${workspace.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: name.trim(),
+          settings: { industry: industry.trim(), website_url: website.trim(), timezone: timezone.trim() },
+        }),
+      });
+      onSaved(result.workspace);
+      setName(result.workspace.name);
+      setIndustry(result.workspace.settings?.industry ?? "");
+      setWebsite(result.workspace.settings?.website_url ?? "");
+      setTimezone(result.workspace.settings?.timezone ?? "Asia/Kolkata");
+      setMessage("Workspace settings saved.");
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : "";
+      setError(detail === "Request failed (422)"
+        ? "Check the website and timezone. Use a public HTTPS website and a timezone such as Asia/Kolkata."
+        : detail || "Could not save workspace settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="workspace-settings-title" className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+      <h2 id="workspace-settings-title" className="text-xl font-semibold">Workspace settings</h2>
+      <form className="mt-4 space-y-4" onSubmit={event => void save(event)}>
+        <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
+          <label className="block text-sm text-gray-300">Business name
+            <input className="glass-input mt-2 w-full bg-transparent" value={name} onChange={event => setName(event.target.value)} maxLength={200} required />
+          </label>
+          <label className="block text-sm text-gray-300">Industry (optional)
+            <input className="glass-input mt-2 w-full bg-transparent" value={industry} onChange={event => setIndustry(event.target.value)} maxLength={100} />
+          </label>
+          <label className="block text-sm text-gray-300">Website (optional)
+            <input className="glass-input mt-2 w-full bg-transparent" type="url" value={website} onChange={event => setWebsite(event.target.value)} maxLength={300} placeholder="https://example.com" />
+          </label>
+          <label className="block text-sm text-gray-300">Timezone
+            <input className="glass-input mt-2 w-full bg-transparent" value={timezone} onChange={event => setTimezone(event.target.value)} minLength={3} maxLength={64} placeholder="Asia/Kolkata" required />
+          </label>
+        </fieldset>
+        <button type="submit" className="button-light" disabled={saving}>{saving ? "Saving…" : "Save settings"}</button>
+        {message && <p role="status" className="text-sm text-emerald-200">{message}</p>}
+        {error && <p role="alert" className="text-sm text-rose-200">{error}</p>}
+      </form>
+    </section>
+  );
+}
+
+function WorkspaceTeamPanel({ workspace, entitled }: { workspace: Workspace; entitled: boolean }) {
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [invitations, setInvitations] = useState<WorkspaceInvitation[]>([]);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const path = `/api/v1/workspaces/${workspace.id}`;
+  const canManage = workspace.role === "owner" || workspace.role === "admin";
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      requestApi<{ members: WorkspaceMember[] }>(path + "/members"),
+      canManage ? requestApi<{ invitations: WorkspaceInvitation[] }>(path + "/invitations") : Promise.resolve({ invitations: [] }),
+    ]).then(([roster, invites]) => {
+      if (!active) return;
+      setMembers(roster.members);
+      setInvitations(invites.invitations);
+    }).catch(cause => {
+      if (!active) return;
+      setLoadFailed(true);
+      setError(cause instanceof Error ? cause.message : "Could not load the team.");
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [canManage, path]);
+
+  async function invite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !canManage || !entitled) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await requestApi<{ invitation: WorkspaceInvitation; token: string }>(path + "/invitations", {
+        method: "POST", body: JSON.stringify({ email: email.trim(), role: "member" }),
+      });
+      setInvitations(current => [result.invitation, ...current]);
+      setCode(result.token);
+      setEmail("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the invitation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(id: string) {
+    if (busy || !canManage) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await requestApi<{ invitation: Pick<WorkspaceInvitation, "id" | "revoked_at"> }>(`${path}/invitations/${id}/revoke`, { method: "POST" });
+      setInvitations(current => current.map(item => item.id === id ? { ...item, revoked_at: result.invitation.revoked_at } : item));
+      setCode("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not revoke the invitation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const pending = invitations.filter(item => !item.accepted_at && !item.revoked_at && Date.parse(item.expires_at) > Date.now());
+
+  return (
+    <details className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+      <summary className="cursor-pointer text-xl font-semibold">Workspace team</summary>
+      {loading && <p role="status" className="mt-4 text-sm text-gray-300">Loading workspace team…</p>}
+      {!loading && !loadFailed && (
+        <ul aria-label="Workspace members" className="mt-4 space-y-2 text-sm text-gray-300">
+          {members.map(member => <li key={member.auth_user_id} className="break-all">{member.email || "Workspace member"} · {member.role}</li>)}
+        </ul>
+      )}
+      {canManage && entitled && !loading && <form className="mt-4 space-y-3" onSubmit={event => void invite(event)}>
+        <label className="block text-sm text-gray-300">Teammate email
+          <input className="glass-input mt-2 w-full bg-transparent" value={email} onChange={event => setEmail(event.target.value)} type="email" maxLength={254} required />
+        </label>
+        <button type="submit" className="button-light" disabled={busy}>Create invitation</button>
+      </form>}
+      {code && <label className="mt-4 block text-sm text-gray-300">Share this one-time code privately with the invited teammate
+        <input className="glass-input mt-2 w-full bg-transparent" value={code} onFocus={event => event.currentTarget.select()} readOnly />
+      </label>}
+      {pending.length > 0 && <ul aria-label="Pending invitations" className="mt-4 space-y-2 text-sm text-gray-300">
+        {pending.map(item => <li key={item.id} className="flex flex-wrap items-center gap-3">
+          <span className="break-all">{item.invitee_email}</span>
+          <button type="button" className="underline underline-offset-4" disabled={busy} onClick={() => void revoke(item.id)}>Revoke invitation</button>
+        </li>)}
+      </ul>}
+      {error && <p role="alert" className="mt-4 text-sm text-rose-200">{error}</p>}
+    </details>
+  );
+}
+
 export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut: () => void; signingOut: boolean }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string>("");
   const [entitlement, setEntitlement] = useState<boolean | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceSlug, setWorkspaceSlug] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [acceptingInvite, setAcceptingInvite] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -452,6 +625,28 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
     }
   }
 
+  async function acceptInvitation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (acceptingInvite) return;
+    setAcceptingInvite(true);
+    setError("");
+    setMessage("");
+    try {
+      const { workspace } = await requestApi<{ workspace: Workspace }>("/api/v1/workspace-invitations/accept", {
+        method: "POST", body: JSON.stringify({ token: inviteCode.trim() }),
+      });
+      setWorkspaces(current => [workspace, ...current.filter(item => item.id !== workspace.id)]);
+      if (workspace.id !== activeWorkspace) setEntitlement(null);
+      setActiveWorkspace(workspace.id);
+      setInviteCode("");
+      setMessage("You joined the workspace.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not accept the invitation.");
+    } finally {
+      setAcceptingInvite(false);
+    }
+  }
+
   async function createContact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeWorkspace || busy) return;
@@ -539,12 +734,27 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
           </form>
         </section>}
 
+        {selected && (selected.role === "owner" || selected.role === "admin") && (
+          <WorkspaceSettingsPanel key={`settings-${selected.id}`} workspace={selected} onSaved={updated =>
+            setWorkspaces(current => current.map(workspace => workspace.id === updated.id ? updated : workspace))
+          } />
+        )}
+        {selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
+        <details className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+          <summary className="cursor-pointer text-sm font-medium">Join a workspace with an invitation</summary>
+          <form className="mt-4 space-y-3" onSubmit={event => void acceptInvitation(event)}>
+            <label className="block text-sm text-gray-300">Invitation code
+              <input className="glass-input mt-2 w-full bg-transparent" value={inviteCode} onChange={event => setInviteCode(event.target.value)} autoComplete="off" minLength={32} maxLength={128} required />
+            </label>
+            <button type="submit" className="button-light" disabled={acceptingInvite}>{acceptingInvite ? "Joining…" : "Join workspace"}</button>
+          </form>
+        </details>
         {selected && entitlement === null && <p role="status" className="text-sm text-gray-300">Checking subscription access…</p>}
         {selected && entitlement === false && <section className="rounded-3xl border border-violet-400/25 bg-violet-500/5 p-5 sm:p-7">
           <h2 className="text-xl font-semibold">Explore Zyvello — free account</h2>
-          <p className="mt-2 text-sm text-gray-300">Your workspace is ready. Contacts, campaigns, AI tools and background jobs are premium features and require an active paid subscription.</p>
+          <p className="mt-2 text-sm text-gray-300">Your workspace is ready. An active subscription unlocks contacts, campaign drafts, and workspace checks.</p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {["Business contacts", "Campaign management", "AI-assisted drafts", "Background automation"].map(feature =>
+            {["Business contacts", "Campaign drafts", "Workspace checks"].map(feature =>
               <div key={feature} className="rounded-xl border border-white/10 bg-black/20 p-4">
                 <p className="font-medium text-white">{feature}</p>
                 <p className="mt-1 text-xs text-gray-400">Subscription required</p>
@@ -630,7 +840,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
             </div>)}
           </div>
         </section>}
-        {selected && <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"} onEntitlementChange={setEntitlement} />}
+        {selected && <BillingPanel key={`billing-${selected.id}`} workspaceId={selected.id} owner={selected.role === "owner"} onEntitlementChange={setEntitlement} />}
       </>}
       <p className="text-xs leading-5 text-gray-400">Private staging only. Prospecting, email delivery, payment collection and production automation will remain unavailable until verified and enabled separately.</p>
     </div>
