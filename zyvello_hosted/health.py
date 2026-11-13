@@ -7,6 +7,7 @@ single-tenant SQLite state manager. Neither is safe to expose as a hosted SaaS.
 import asyncio
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Callable, Literal
 from uuid import UUID
@@ -150,6 +151,12 @@ class CompleteGmailRequest(BaseModel):
     state: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
 
 
+class SendCampaignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    subject: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00-\x1f\x7f]+$")
+    body: str = Field(min_length=1, max_length=5000)
+
+
 class ContactPermissionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern=r"^(claimed_consent|opted_out|suppressed)$")
@@ -177,6 +184,9 @@ def create_app(
     billing_gateway_override: RazorpayGateway | None = None,
     credential_vault_override: CredentialVault | None = None,
     gmail_oauth_override: GmailOAuth | None = None,
+    campaign_pilot_recipient_override: str | None = None,
+    campaign_pilot_workspace_override: UUID | None = None,
+    campaign_reply_sync_override: bool | None = None,
     enable_ai_drafts_override: bool | None = None,
     allow_workspace_creation_override: bool | None = None,
     subscription_enforcement_override: bool | None = None,
@@ -201,6 +211,17 @@ def create_app(
         credential_vault = CredentialVault(os.environ["ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"])
     gmail_oauth = gmail_oauth_override or GmailOAuth.from_env()
     gmail_ready = gmail_oauth is not None and credential_vault is not None
+    pilot_recipient = (campaign_pilot_recipient_override if campaign_pilot_recipient_override is not None
+                       else os.getenv("ZYVELLO_CAMPAIGN_PILOT_RECIPIENT", "")).strip().lower()
+    try:
+        pilot_workspace = campaign_pilot_workspace_override or UUID(os.getenv("ZYVELLO_CAMPAIGN_PILOT_WORKSPACE", ""))
+    except ValueError:
+        pilot_workspace = None
+    campaign_pilot = gmail_ready and pilot_workspace is not None and len(pilot_recipient) <= 254 and bool(
+        re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", pilot_recipient)
+    )
+    reply_sync = campaign_pilot and (campaign_reply_sync_override if campaign_reply_sync_override is not None
+                                     else os.getenv("ZYVELLO_ENABLE_GMAIL_REPLY_SYNC", "").lower() == "true")
     ai_drafts_enabled = (enable_ai_drafts_override if enable_ai_drafts_override is not None
                          else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
     # Public onboarding is enabled only on deployments with paid-feature checks.
@@ -445,7 +466,7 @@ def create_app(
                           db: HostedStore = Depends(ready_store)):
         if not gmail_oauth or not credential_vault:
             raise HTTPException(503, "Gmail connection is not configured")
-        state, verifier, authorization_url = gmail_oauth.begin()
+        state, verifier, authorization_url = gmail_oauth.begin(reply_metadata=reply_sync and workspace_id == pilot_workspace)
         await store_call(db.begin_gmail_connection, identity.user_id, workspace_id,
                          state_hash=hashlib.sha256(state.encode()).hexdigest(),
                          verifier_ciphertext=credential_vault.seal_gmail(workspace_id, "verifier", verifier))
@@ -495,6 +516,61 @@ def create_app(
             raise HTTPException(503, "Gmail connection is not configured")
         await store_call(db.disconnect_gmail, identity.user_id, workspace_id)
         return {"disconnected": True}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/campaign-deliveries", dependencies=[Depends(require_paid_workspace)])
+    async def campaign_delivery_list(workspace_id: UUID, identity=Depends(verified_identity),
+                                     db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.campaign_deliveries, identity.user_id, workspace_id)
+        return {"deliveries": [serialize_row(row) for row in rows],
+                "pilot_enabled": campaign_pilot and workspace_id == pilot_workspace,
+                "pilot_recipient": pilot_recipient if campaign_pilot and workspace_id == pilot_workspace else None,
+                "reply_sync_enabled": reply_sync and workspace_id == pilot_workspace}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/drafts/{draft_id}/send", dependencies=[Depends(require_paid_workspace)])
+    async def send_campaign_draft(workspace_id: UUID, draft_id: UUID, body: SendCampaignRequest,
+                                  identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        if not campaign_pilot or workspace_id != pilot_workspace or not gmail_oauth or not credential_vault:
+            raise HTTPException(503, "Campaign sending is not enabled on this deployment")
+        attempt = await store_call(db.reserve_campaign_delivery, identity.user_id, workspace_id,
+                                   draft_id=draft_id, pilot_recipient=pilot_recipient, subject=body.subject)
+        delivery_id = attempt["delivery_id"]
+        message_id, thread_id = None, None
+        try:
+            token = credential_vault.open_gmail(workspace_id, "refresh", attempt["refresh_ciphertext"])
+            message_id, thread_id = await asyncio.to_thread(
+                gmail_oauth.send_message, sender=attempt["sender"], recipient=attempt["recipient"],
+                refresh_token=token, subject=body.subject, body=body.body,
+                message_id=f"<{delivery_id}@zyvello.pro>",
+            )
+        except (CredentialDecryptionError, GmailAuthorizationError):
+            # A timeout after Gmail received the request can look like a failure.
+            # Keep the reservation so repeated requests never send another copy.
+            pass
+        await store_call(db.finish_campaign_delivery, identity.user_id, workspace_id,
+                         delivery_id=delivery_id, message_id=message_id, thread_id=thread_id)
+        return {"delivery_id": str(delivery_id), "status": "accepted" if message_id else "unconfirmed"}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/campaign-deliveries/{delivery_id}/sync",
+              dependencies=[Depends(require_paid_workspace)])
+    async def sync_campaign_reply(workspace_id: UUID, delivery_id: UUID, identity=Depends(verified_identity),
+                                  db: HostedStore = Depends(ready_store)):
+        if not reply_sync or workspace_id != pilot_workspace or not gmail_oauth or not credential_vault:
+            raise HTTPException(503, "Gmail reply sync is not enabled on this deployment")
+        delivery = await store_call(db.reserve_campaign_reply_sync, identity.user_id, workspace_id, delivery_id)
+        try:
+            token = credential_vault.open_gmail(workspace_id, "refresh", delivery["refresh_ciphertext"])
+            received_at = await asyncio.to_thread(
+                gmail_oauth.newest_reply, refresh_token=token, thread_id=delivery["gmail_thread_id"],
+                sent_id=delivery["gmail_message_id"], recipient=delivery["recipient"], sent_after=delivery["created_at"],
+            )
+        except CredentialDecryptionError:
+            raise HTTPException(409, "Reconnect Gmail to check replies.") from None
+        except GmailAuthorizationError as error:
+            raise HTTPException(502, str(error)) from None
+        if received_at:
+            await store_call(db.record_campaign_reply, identity.user_id, workspace_id,
+                             delivery_id=delivery_id, received_at=received_at)
+        return {"reply_found": received_at is not None}
 
     @app.get("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def groq_credential_status(workspace_id: UUID, identity=Depends(verified_identity),
@@ -725,6 +801,8 @@ def create_app(
             "job_kinds": ["workspace_health"] + (["groq_draft"] if ai_drafts_enabled else []),
             "ai_enabled": ai_drafts_enabled,
             "gmail_connection_enabled": bool(store and gmail_ready),
+            "gmail_campaign_pilot_enabled": bool(store and campaign_pilot),
+            "gmail_reply_sync_enabled": bool(store and reply_sync),
             "outbound_sending_enabled": False,
             "payments_enabled": False,
             "razorpay_test_billing_ready": bool(billing_settings.enabled and billing_api and billing_webhooks),

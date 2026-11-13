@@ -158,6 +158,26 @@ mailbox as both sender and recipient. Disconnect removes the stored token from
 Zyvello. The Google Account connections page separately controls Google's
 authorization grant.
 
+### Gmail campaign pilot
+
+Apply migration `0014_campaign_mail_pilot.sql`. Set
+`ZYVELLO_CAMPAIGN_PILOT_WORKSPACE` to the paid QA workspace UUID and
+`ZYVELLO_CAMPAIGN_PILOT_RECIPIENT` to the exact second inbox approved for the
+test, through the staging Gmail secret. Leave these unset for other deployments.
+The workspace manager adds the contact, attaches it to a campaign, generates
+a draft, and reviews and approves it in **Controls → Start pilot send**.
+The delivery is listed in **Outbox**. The pilot permits one send attempt per
+workspace per 24 hours and one per campaign contact. An ambiguous result
+keeps its reservation so a retry cannot duplicate the send.
+
+For the reply pilot, add Google's restricted `gmail.metadata` scope to the
+staging Google OAuth project and set `ZYVELLO_ENABLE_GMAIL_REPLY_SYNC=true`.
+Reconnect the same sending mailbox and approve the added scope. Reply from the
+second inbox, then use **Conversations → Check Gmail for reply**. Zyvello
+checks the stored Gmail thread ID for a reply from the original recipient and
+records its timestamp. No reply body is requested. Public rollout is separate
+from the testing-mode pilot.
+
 Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
 
 ## Razorpay subscription integration — test only

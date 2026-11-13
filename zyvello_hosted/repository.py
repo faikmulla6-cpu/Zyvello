@@ -352,6 +352,63 @@ class HostedStore(WorkspaceManagementMixin):
                 raise StoreConflict("Connect Gmail or wait five minutes before sending another test.")
             return row
 
+    def campaign_deliveries(self, auth_user_id: str, workspace_id: UUID) -> list[dict[str, Any]]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("""
+                SELECT id, campaign_id, draft_id, recipient, subject, status, created_at, last_reply_at,
+                       gmail_thread_id IS NOT NULL AS has_thread
+                FROM zyvello.campaign_deliveries WHERE workspace_id=%s
+                ORDER BY created_at DESC LIMIT 50
+            """, (workspace_id,))
+            return cursor.fetchall()
+
+    def reserve_campaign_delivery(self, auth_user_id: str, workspace_id: UUID, *,
+                                  draft_id: UUID, pilot_recipient: str, subject: str) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT * FROM zyvello.reserve_campaign_delivery(%s,%s,%s,%s)",
+                           (workspace_id, draft_id, pilot_recipient, subject))
+            row = cursor.fetchone()
+            if not row:
+                raise StoreConflict(
+                    "Check the connected mailbox, pilot recipient, recorded permission, or prior send. "
+                    "The pilot allows one attempt per workspace per 24 hours and one per campaign contact."
+                )
+            return row
+
+    def finish_campaign_delivery(self, auth_user_id: str, workspace_id: UUID, *,
+                                 delivery_id: UUID, message_id: str | None, thread_id: str | None) -> None:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("""
+                UPDATE zyvello.campaign_deliveries
+                SET status=%s, gmail_message_id=%s, gmail_thread_id=%s
+                WHERE workspace_id=%s AND id=%s AND status='reserved'
+            """, ("accepted" if message_id else "unconfirmed", message_id, thread_id, workspace_id, delivery_id))
+            if cursor.rowcount != 1:
+                raise StoreConflict("The send result could not be recorded. Check Gmail before retrying.")
+
+    def reserve_campaign_reply_sync(self, auth_user_id: str, workspace_id: UUID,
+                                    delivery_id: UUID) -> dict[str, Any]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("SELECT * FROM zyvello.reserve_campaign_reply_sync(%s,%s)",
+                           (workspace_id, delivery_id))
+            row = cursor.fetchone()
+            if not row:
+                raise StoreConflict("Connect the original mailbox or wait 30 seconds before checking replies again.")
+            return row
+
+    def record_campaign_reply(self, auth_user_id: str, workspace_id: UUID, *,
+                              delivery_id: UUID, received_at: Any) -> None:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace_manager(cursor, workspace_id)
+            cursor.execute("""
+                UPDATE zyvello.campaign_deliveries SET last_reply_at=GREATEST(last_reply_at,%s)
+                WHERE workspace_id=%s AND id=%s AND status='accepted'
+            """, (received_at, workspace_id, delivery_id))
+
     def get_groq_credential_status(self, auth_user_id: str, workspace_id: UUID) -> dict[str, Any]:
         with self.transaction(auth_user_id) as cursor:
             # Membership and manager checks both occur in RLS; non-managers

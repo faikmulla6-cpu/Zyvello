@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
+import { HostedCampaignPilot, type CampaignDeliveryData } from "./HostedCampaignPilot";
 import { HostedGmailConnection, type GmailStatus } from "./HostedGmailConnection";
 import { gmailReturn } from "./gmail-return";
 import { HostedGroqConnection, type GroqStatus } from "./HostedGroqConnection";
@@ -479,8 +480,6 @@ type DashboardProps = {
 };
 
 const pendingSections: Partial<Record<DeckSection, string>> = {
-  outbox: "Outbox will be available when mailbox sending is connected.",
-  conversations: "Conversation history will be available when reply sync is connected.",
   signals: "Hosted lead signals are in development.",
   discover: "Hosted prospect discovery is in development.",
   companies: "The company directory will be available when hosted prospect discovery is connected.",
@@ -691,6 +690,19 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   }), [gmailPath]);
   const disconnectGmail = useCallback(async () => { await requestApi(gmailPath, { method: "DELETE" }); }, [gmailPath]);
   const sendGmailTest = useCallback(async () => { await requestApi(gmailPath + "/test", { method: "POST" }); }, [gmailPath]);
+  const workspacePath = `/api/v1/workspaces/${activeWorkspace}`;
+  const loadDeliveries = useCallback(() => requestApi<CampaignDeliveryData>(workspacePath + "/campaign-deliveries"), [workspacePath]);
+  const recordPilotConsent = useCallback((contactId: string, evidence: string) =>
+    requestApi(workspacePath + `/contacts/${contactId}/permission`, {
+      method: "POST", body: JSON.stringify({ action: "claimed_consent", source: "campaign_pilot", evidence }),
+    }), [workspacePath]);
+  const sendPilotDraft = useCallback((draftId: string, subject: string, body: string) =>
+    requestApi<{ status: string }>(workspacePath + `/drafts/${draftId}/send`, {
+      method: "POST", body: JSON.stringify({ subject, body }),
+    }), [workspacePath]);
+  const syncPilotReply = useCallback((deliveryId: string) =>
+    requestApi<{ reply_found: boolean }>(workspacePath + `/campaign-deliveries/${deliveryId}/sync`, { method: "POST" }),
+    [workspacePath]);
   const groqPath = `/api/v1/workspaces/${activeWorkspace}/credentials/groq`;
   const loadGroq = useCallback(() => requestApi<GroqStatus>(groqPath), [groqPath]);
   const saveGroq = useCallback((key: string) => requestApi<GroqStatus>(groqPath, {
@@ -717,6 +729,11 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     });
     return () => { active = false; };
   }, [activeWorkspace, entitlement, section, manager, loadGroq, refreshDrafts]);
+
+  useEffect(() => {
+    if (!activeWorkspace || entitlement !== true || section !== "controls" || !manager) return;
+    void refreshDrafts().catch(() => setError("Could not load campaign drafts."));
+  }, [activeWorkspace, entitlement, section, manager, refreshDrafts]);
 
   async function generateDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -862,7 +879,8 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   }, [activeWorkspace]);
   const selected = workspaces.find(workspace => workspace.id === activeWorkspace);
   const workspaceHome = section === "today" || !selected;
-  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity";
+  const pilotView = section === "controls" || section === "outbox" || section === "conversations" ? section : null;
+  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity" || !!pilotView;
   return (
     <HostedCommandDeck email={email} section={section} onNavigate={navigate} onSignOut={onSignOut} signingOut={signingOut}>
       <div className="space-y-6">
@@ -1028,11 +1046,10 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
             </div>)}
           </div>
         </section>}
-        {selected && section === "controls" && <section className="card" aria-label="Campaign controls">
-          <button type="button" className="btn btn-primary" disabled>Start outreach</button>
-          <p className="muted mt-3">Outreach requires a supported mailbox and a hosted sending worker.</p>
-          <button type="button" className="btn btn-secondary mt-3" onClick={() => navigate("settings")}>View connections</button>
-        </section>}
+        {selected && pilotView && entitlement === true && (manager
+          ? <HostedCampaignPilot key={selected.id + pilotView} view={pilotView} drafts={generatedDrafts} contacts={contacts}
+              load={loadDeliveries} recordConsent={recordPilotConsent} send={sendPilotDraft} sync={syncPilotReply} />
+          : <p className="card muted">Campaign sending and reply checks are available to workspace managers.</p>)}
         {selected && pendingSections[section] && <section className="card"><p>{pendingSections[section]}</p></section>}
         {selected && section === "usage" && <section className="card">
           <p>View contact, campaign draft, and team limits under My account.</p>
