@@ -30,14 +30,20 @@ dependencies = [
     "aiosqlite>=0.19,<1",
     "pydantic>=2.5,<3",
     "pytz>=2024.1",
+    "tzdata>=2025.2",  # IANA timezone data for zoneinfo on Windows
     "fastapi>=0.115,<1",
     "uvicorn>=0.34,<1",
 ]
 
 [project.optional-dependencies]
+hosted = [
+    "PyJWT[crypto]>=2.9,<3",
+]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
+    # The existing all-test CI also collects tests/test_hosted_auth.py.
+    "PyJWT[crypto]>=2.9,<3",
 ]
 
 [project.urls]

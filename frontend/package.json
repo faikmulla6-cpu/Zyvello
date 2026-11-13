@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build --outDir dist --base / && node scripts/prepare-static.mjs",
-    "build:app": "tsc --noEmit && vite build"
+    "build:app": "tsc --noEmit && vite build",
+    "build:hosted": "node scripts/check-hosted-build.mjs && npm run build && node scripts/check-hosted-dist.mjs"
   },
   "dependencies": {
+    "@neon/neon-js": "^0.10.2",
     "@radix-ui/react-slot": "^1.5.0",
     "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",

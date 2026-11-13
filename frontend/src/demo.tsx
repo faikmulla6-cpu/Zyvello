@@ -1,27 +1,27 @@
-import { ArrowRight, Check, Search, Send, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Search, FileText, Building2 } from "lucide-react";
 import { Hero2 } from "@/components/ui/hero-2-1";
 import { HelpSection } from "@/components/ui/help-section";
+import { planPage } from "@/hosted/plan-selection";
 import { BrandIcon } from "@/components/ui/brand-icon";
 
 const steps = [
-  { icon: Sparkles, title: "Describe your business", text: "Start with your website or a short brief. Set your offer, ideal customer, and the goal of your outreach." },
-  { icon: Search, title: "Find and verify leads", text: "Discover companies, choose the signals that matter, and verify contact details before reaching out." },
-  { icon: Send, title: "Send relevant outreach", text: "Connect your mailbox. Review personalized drafts or enable autopilot within your sending limits." },
-  { icon: MessageSquare, title: "Keep replies moving", text: "Handle routine replies, stop follow-ups when someone answers, and bring exceptions back to you." },
+  { icon: Building2, title: "Set up your workspace", text: "Verify your email, then add your business name, website, and timezone." },
+  { icon: Search, title: "Organize contacts", text: "Add and manage your business contacts manually in a private workspace." },
+  { icon: FileText, title: "Prepare campaign drafts", text: "Create campaign plans, attach contacts, and review your audience in your workspace." },
 ];
+
+const hosted = import.meta.env.VITE_ZYVELLO_HOSTED_MODE === "true";
+const dashboardPath = hosted ? "/app" : "/";
 
 const DemoOne = () => (
   <div className="landing-page">
     <Hero2 />
     <section id="workflow" className="section-wrap border-t border-white/10">
-      <p className="eyebrow">From brief to conversation</p>
-      <h2 className="section-title">Your offer. An active pipeline.</h2>
-      <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-        {steps.map(({ icon: Icon, title, text }, index) => (
+      <h2 className="section-title">How Zyvello works</h2>
+      <div className="mt-12 grid gap-8 md:grid-cols-3">
+        {steps.map(({ icon: Icon, title, text }) => (
           <article key={title} className="landing-glass p-6">
-            <div className="flex items-center justify-between text-gray-400">
-              <Icon aria-hidden="true" className="h-5 w-5" /><span className="text-xs">0{index + 1}</span>
-            </div>
+            <Icon aria-hidden="true" className="h-5 w-5 text-gray-400" />
             <h3 className="mt-5 text-lg font-medium">{title}</h3>
             <p className="mt-3 text-sm leading-7 text-gray-400">{text}</p>
           </article>
@@ -32,8 +32,8 @@ const DemoOne = () => (
       <div>
         <p className="eyebrow">Built for small agencies</p>
         <h2 className="section-title">Make room for the conversations that matter.</h2>
-        <p className="mt-5 max-w-lg leading-7 text-gray-400">Use business signals to find a reason to reach out. Keep prospects, campaigns, and conversations connected as you build your agency's pipeline.</p>
-        <a href="/" className="mt-7 inline-flex items-center gap-2 font-medium">Explore the dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
+        <p className="mt-5 max-w-lg leading-7 text-gray-400">Keep manually added contacts and campaign drafts organized. Automated prospecting, sending and AI replies are not enabled in the hosted product yet.</p>
+        <a href={dashboardPath} className="mt-7 inline-flex items-center gap-2 font-medium">Explore the dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
       </div>
       <figure>
         <img src="/static/landing/assets/agency-office.jpg" alt="A bright shared office with desks, plants, and room for a growing team"
@@ -42,29 +42,48 @@ const DemoOne = () => (
       </figure>
     </section>
     <section id="pricing" className="section-wrap grid items-center gap-10 border-t border-white/10 md:grid-cols-2 md:gap-16">
-      <div><p className="eyebrow">Hosted plan preview</p><h2 className="section-title">One plan.<br />A connected workflow.</h2><p className="mt-5 max-w-md leading-7 text-gray-400">Explore the local edition today. Subscription checkout will be available with the hosted launch.</p></div>
-      <article className="landing-glass p-7 md:p-9">
-        <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-medium">Zyvello Agency</h3><span className="rounded-full border border-white/20 px-3 py-1 text-[10px] tracking-widest text-gray-300">PLANNED</span></div>
-        <p className="mt-6"><strong className="text-5xl font-semibold tracking-tight">₹4,999</strong><span className="ml-2 text-sm text-gray-400">/ month</span></p>
-        <ul className="my-7 space-y-4 text-sm text-gray-300">
-          {["One workspace and one active sending mailbox", "Up to 300 newly verified contacts per billing cycle", "Up to 600 outbound emails per billing cycle"].map((text) => (
-            <li key={text} className="flex items-start gap-3"><Check aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />{text}</li>
-          ))}
-        </ul>
-        <p className="text-xs leading-6 text-gray-500">Proposed pricing and allowances. Checkout opens at launch.</p>
-      </article>
+      <div>
+        <p className="eyebrow">Hosted plans — approved prices</p>
+        <h2 className="section-title">Start small.<br />Grow with control.</h2>
+        <p className="mt-5 max-w-md leading-7 text-gray-400">Monthly plan prices in INR. Account creation is free. Hosted checkout currently runs in Test Mode.</p>
+        <p className="mt-4 text-sm text-gray-400">AI Employee — from ₹9,999/month, future only. Not available for purchase.</p>
+        <a href="/subscription-policy" className="mt-4 inline-block text-sm underline underline-offset-4">Subscription policy</a>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3 md:grid-cols-1 lg:grid-cols-3 md:col-span-1">
+        {([
+          { code: "starter", name: "Starter", price: "₹499", contacts: "100", drafts: "5", seats: "1" },
+          { code: "growth", name: "Growth", price: "₹1,499", contacts: "400", drafts: "20", seats: "3" },
+          { code: "business", name: "Business", price: "₹3,999", contacts: "1,000", drafts: "50", seats: "10" },
+        ] as const).map(plan => (
+          <article className="landing-glass p-5" key={plan.code}>
+            <h3 className="font-medium">{plan.name}</h3>
+            <p className="mt-4 text-2xl font-semibold">{plan.price}<span className="ml-1 text-xs font-normal text-gray-400">/mo</span></p>
+            <ul className="mt-4 space-y-2 text-xs text-gray-300">
+              {[plan.contacts+" stored contacts",plan.drafts+" campaign drafts",plan.seats+" workspace member(s)"].map(text =>
+                <li className="flex items-start gap-2" key={text}><Check aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-400" />{text}</li>
+              )}
+            </ul>
+            {hosted && <a className="button-outline mt-5 w-full px-4" href={planPage("/signup", plan.code)}>Choose {plan.name}</a>}
+          </article>
+        ))}
+      </div>
     </section>
     <section id="resources" className="section-wrap border-t border-white/10">
       <p className="eyebrow">Getting started</p><h2 className="section-title">A few things to know.</h2>
       <div className="landing-faq mt-8 space-y-3">
-        <details className="py-6"><summary className="cursor-pointer font-medium">How do I open the local dashboard?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">Choose Open dashboard to go straight to your workspace. Start the local app with <code>the local dashboard launcher</code> and open the address it prints. Your existing setup is available there.</p></details>
-        <details className="py-6"><summary className="cursor-pointer font-medium">Can I review emails before they send?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">Yes. Approval mode sends drafts to the Outbox for your review. You can choose autopilot in Settings, set daily limits and quiet hours, and pause sending at any time.</p></details>
-        <details className="py-6"><summary className="cursor-pointer font-medium">Which email providers can I use?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">The local edition supports Gmail, Microsoft 365, SMTP and IMAP mailboxes, and the existing Instantly integration. Connect your provider through the dashboard or CLI setup.</p></details>
+        <details className="py-6"><summary className="cursor-pointer font-medium">How do I get started?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">Create a free account and open your private business workspace. A paid TEST subscription currently unlocks manual contact and campaign planning in the hosted beta. Live payment collection is not enabled.</p></details>
+        <details className="py-6"><summary className="cursor-pointer font-medium">Can this hosted version send emails?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">No. Contact management and campaign planning are available in the hosted preview. Outbound sending, automated AI outreach and reply handling are not enabled.</p></details>
+        <details className="py-6"><summary className="cursor-pointer font-medium">Can I connect a mailbox in this hosted beta?</summary><p className="mt-4 max-w-3xl text-sm leading-7 text-gray-400">No. Hosted sending and mailbox integrations are disabled. We will clearly announce when supported mailbox and automation features pass their security and deliverability checks.</p></details>
       </div>
     </section>
-    <HelpSection />
+    {hosted ? (
+      <section id="help" aria-labelledby="help-title" className="section-wrap border-t border-white/10">
+        <h2 id="help-title" className="section-title">Need help?</h2>
+        <p className="mt-4 text-gray-400">For account, workspace, or billing questions, email <a className="text-white underline underline-offset-4" href="mailto:support@zyvello.pro">support@zyvello.pro</a>.</p>
+      </section>
+    ) : <HelpSection />}
     <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-5 border-t border-white/10 px-5 py-8 text-sm md:px-8">
-      <a href="/welcome" className="inline-flex items-center gap-2.5 text-lg font-semibold"><BrandIcon />Zyvello</a><p className="text-gray-500">Lead discovery, outreach, and replies.</p><a href="/" className="inline-flex items-center gap-2">Open dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
+      <a href="/welcome" className="inline-flex items-center gap-2.5 text-lg font-semibold"><BrandIcon />Zyvello</a><p className="text-gray-500">Hosted contact management and campaign planning preview.</p><a href={dashboardPath} className="inline-flex items-center gap-2">Open dashboard <ArrowRight aria-hidden="true" className="h-4 w-4" /></a>
     </footer>
   </div>
 );
