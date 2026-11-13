@@ -114,16 +114,16 @@ profile and must never receive these secrets. Two secrets exist in `main`:
 | `zyvello-staging-worker-db` | `ZYVELLO_WORKER_DATABASE_URL` | `process_jobs` |
 | `zyvello-staging-billing-db` | `ZYVELLO_BILLING_DATABASE_URL` | `web` only, restricted DB role |
 | `zyvello-staging-billing` | `ZYVELLO_RAZORPAY_*` (below) | `web` only, Razorpay test configuration |
-| `zyvello-staging-drafts` (optional) | `ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS`, `ZYVELLO_ENABLE_AI_DRAFTS` | `web` and `process_jobs` |
+| `zyvello-staging-drafts` | `ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS`, `ZYVELLO_ENABLE_AI_DRAFTS` | `web` and `process_jobs` |
 
 On 2026-11-10 these latter two Modal Secrets were created in the `zyvello`
 workspace: the restricted billing DB connection is present and the payment
 configuration contains only `ZYVELLO_RAZORPAY_MODE=disabled`. No Razorpay API
 keys, webhook secret or actual plan IDs have been supplied or activated.
 
-To deploy the draft-only feature, set `ZYVELLO_STAGING_DRAFT_SECRET=zyvello-staging-drafts`
-on the deployment command. Provision that Modal secret with a persistent Fernet
-keyring and `ZYVELLO_ENABLE_AI_DRAFTS=true`. Preserve existing keys during
+Before deploying, provision `zyvello-staging-drafts` with a persistent Fernet
+keyring and set `ZYVELLO_ENABLE_AI_DRAFTS` to `true` for draft generation or
+`false` to keep generation disabled. Preserve existing keys during
 rotation so earlier workspace credentials can still be decrypted. Each workspace
 manager supplies their own Groq API key under Settings.
 
