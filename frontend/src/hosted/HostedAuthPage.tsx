@@ -37,8 +37,7 @@ type EmailOtpAuth = {
   };
 };
 
-// Separate from the single-owner local API. Deliberately no Harvey/dashboard
-// imports, and no access to customer data until workspace APIs are verified.
+// Hosted sessions and workspace requests use Neon and the hosted API.
 export function HostedAuthPage({ page }: { page: Page }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [checking, setChecking] = useState(true);
@@ -68,7 +67,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
         if (!active) return;
         if (sessionError) {
           setError("Unable to check your session. Please refresh and try again.");
-        } else if (data?.session && data?.user) {
+        } else if (data?.session && data?.user?.emailVerified) {
           setAccount({ id: data.user.id, email: data.user.email, name: data.user.name });
         }
       })
@@ -226,6 +225,10 @@ export function HostedAuthPage({ page }: { page: Page }) {
     }
   }
 
+  if (page === "app" && account && !checking) {
+    return <HostedWorkspaceDashboard email={account.email} sessionError={error} onSignOut={() => void signOut()} signingOut={busy} />;
+  }
+
   const isSignUp = page === "signup";
   return (
     <div className="auth-page relative isolate flex min-h-dvh flex-col overflow-hidden bg-black text-white">
@@ -236,7 +239,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
         <a href="/welcome" className="inline-flex items-center gap-2 text-sm text-gray-300"><ArrowLeft className="h-4 w-4" /> Home</a>
       </header>
       <main className="relative z-10 flex flex-1 items-center justify-center px-5 py-12">
-        <section className={`auth-glass-card w-full rounded-3xl border border-white/15 bg-black/50 p-6 shadow-2xl backdrop-blur-2xl sm:p-10 ${page === "app" ? "max-w-5xl" : "max-w-md"}`} aria-label="Hosted Zyvello account">
+        <section className="auth-glass-card w-full max-w-md rounded-3xl border border-white/15 bg-black/50 p-6 shadow-2xl backdrop-blur-2xl sm:p-10" aria-label="Hosted Zyvello account">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/25 px-3 py-1 text-xs text-violet-200"><ShieldCheck className="h-3.5 w-3.5" /> Hosted private beta</p>
           {checking ? <p role="status" className="text-sm text-gray-300">Checking your session…</p>
             : !authClient ? <><h1 className="text-2xl font-semibold">Account access unavailable</h1><p className="mt-4 text-gray-300">This preview has not been connected to an authentication endpoint.</p></>
@@ -244,7 +247,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
               <h1 className="text-3xl font-semibold">You're already signed in.</h1>
               <p className="mt-4 text-gray-300">{account.email}</p>
               <a href="/app" className="button-light mt-6 w-full">Open beta account</a>
-            </> : page === "app" && account ? <HostedWorkspaceDashboard onSignOut={() => void signOut()} signingOut={busy} /> : page === "app" ? <>
+            </> : page === "app" ? <>
               <h1 className="text-3xl font-semibold">Sign in required</h1>
               <p className="mt-4 text-sm text-gray-300">A verified account is required before opening your workspace.</p>
               <a href="/login" className="button-light mt-6 w-full">Go to login</a>

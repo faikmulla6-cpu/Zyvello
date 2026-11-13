@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, BriefcaseBusiness, CheckCircle2, CircleAlert, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
 import { authClient } from "./auth-client";
+import { HostedCommandDeck, readDeckSection, type DeckSection } from "./HostedCommandDeck";
 
 type WorkspaceSettings = { industry: string; website_url: string; timezone: string };
 type Workspace = {
@@ -242,58 +243,58 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   }
 
   return (
-    <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Workspace billing">
+    <section className="card" aria-label="Workspace billing">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Billing</h2>
-          <p className="mt-1 text-sm text-gray-400">Separate per workspace. Live payments are not enabled.</p>
-          <a href="/subscription-policy" className="mt-2 inline-block text-sm text-gray-300 underline underline-offset-4">Subscription policy</a>
+          <p className="mt-1 text-sm text-[var(--text-3)]">Separate per workspace. Live payments are not enabled.</p>
+          <a href="/subscription-policy" className="mt-2 inline-block text-sm text-[var(--text-2)] underline underline-offset-4">Subscription policy</a>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" className="rounded-full border border-white/20 px-3 py-1 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-40"
+          <button type="button" className="rounded-full border border-white/20 px-3 py-1 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40"
             disabled={!enabled} onClick={() => void refreshBilling()}>Refresh billing</button>
-          <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-amber-200">TEST MODE</span>
+          <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-[var(--wait)]">TEST MODE</span>
         </div>
       </div>
-      {!enabled ? <p className="mt-4 text-sm text-gray-300">{checkingBilling ? "Checking billing configuration…" : "Payment testing is not configured yet. No payment will be collected."}</p> : <>
+      {!enabled ? <p className="mt-4 text-sm text-[var(--text-2)]">{checkingBilling ? "Checking billing configuration…" : "Payment testing is not configured yet. No payment will be collected."}</p> : <>
         <div className="mt-5 space-y-2">
-          {subscriptions.length === 0 ? <p className="text-sm text-gray-400">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+          {subscriptions.length === 0 ? <p className="text-sm text-[var(--text-3)]">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="inset rounded-xl p-3 text-sm">
             <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
-            {sub.paid_through && <p className="mt-1 text-xs text-gray-400">Recorded period end: {new Date(sub.paid_through).toLocaleDateString()}</p>}
-            {sub.status === "creating" && <p className="mt-2 text-xs text-amber-200">The provider response is not confirmed. Contact support before starting another checkout.</p>}
-            {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-amber-200">Payment recovery is needed. Paid tools remain locked, and a second checkout is blocked to prevent duplicate recurring subscriptions.</p>}
-            {sub.status === "active" && !sub.entitled && <p className="mt-2 text-xs text-amber-200">Payment confirmation or the paid period is missing. No access has been granted.</p>}
-            {["cancelled", "completed", "expired"].includes(sub.status) && <p className="mt-2 text-xs text-gray-400">This subscription is no longer active; it does not unlock premium tools.</p>}
+            {sub.paid_through && <p className="mt-1 text-xs text-[var(--text-3)]">Recorded period end: {new Date(sub.paid_through).toLocaleDateString()}</p>}
+            {sub.status === "creating" && <p className="mt-2 text-xs text-[var(--wait)]">The provider response is not confirmed. Contact support before starting another checkout.</p>}
+            {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-[var(--wait)]">Payment recovery is needed. Paid tools remain locked, and a second checkout is blocked to prevent duplicate recurring subscriptions.</p>}
+            {sub.status === "active" && !sub.entitled && <p className="mt-2 text-xs text-[var(--wait)]">Payment confirmation or the paid period is missing. No access has been granted.</p>}
+            {["cancelled", "completed", "expired"].includes(sub.status) && <p className="mt-2 text-xs text-[var(--text-3)]">This subscription is no longer active; it does not unlock premium tools.</p>}
             {owner && !["creating", "cancelled", "completed", "expired"].includes(sub.status) && <div className="mt-3">
               {confirmCancelId === sub.id ? <div className="rounded-lg border border-amber-400/25 bg-amber-400/5 p-3">
-                <p className="text-xs text-amber-100">Request cancellation at the end of this billing cycle? Check your subscription status for confirmation from Razorpay.</p>
+                <p className="text-xs text-[var(--wait)]">Request cancellation at the end of this billing cycle? Check your subscription status for confirmation from Razorpay.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="rounded-full border border-rose-300/45 px-3 py-2 text-xs text-rose-100 disabled:opacity-40" disabled={Boolean(cancellingId)} onClick={() => void cancelRenewal(sub)}>
+                  <button type="button" className="rounded-full border border-rose-300/45 px-3 py-2 text-xs text-[var(--bad)] disabled:opacity-40" disabled={Boolean(cancellingId)} onClick={() => void cancelRenewal(sub)}>
                     {cancellingId === sub.id ? "Requesting…" : "Confirm TEST cancellation"}
                   </button>
-                  <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-gray-200" disabled={Boolean(cancellingId)} onClick={() => setConfirmCancelId("")}>Keep subscription</button>
+                  <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-[var(--text)]" disabled={Boolean(cancellingId)} onClick={() => setConfirmCancelId("")}>Keep subscription</button>
                 </div>
-              </div> : <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-40" disabled={Boolean(cancellingId) || Boolean(busyPlan)} onClick={() => setConfirmCancelId(sub.id)}>Cancel test renewal</button>}
+              </div> : <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" disabled={Boolean(cancellingId) || Boolean(busyPlan)} onClick={() => setConfirmCancelId(sub.id)}>Cancel test renewal</button>}
             </div>}
           </div>)}
         </div>
         {plans.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          {plans.map(plan => <div className="rounded-2xl border border-white/15 bg-black/20 p-4" key={plan.code}>
+          {plans.map(plan => <div className="inset rounded-2xl p-4" key={plan.code}>
             <p className="font-medium">{plan.name}</p>
-            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-gray-400">/ month</span></p>
-            <p className="mt-2 text-xs text-gray-300">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
-            <p className="mt-1 text-xs text-gray-500">Manual workspace tools only; AI and outbound sending are not enabled.</p>
-            {!plan.test_checkout_available && <p className="mt-2 text-xs text-amber-200">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
-            <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-white hover:bg-white/10 disabled:opacity-40" type="button"
+            <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-[var(--text-3)]">/ month</span></p>
+            <p className="mt-2 text-xs text-[var(--text-2)]">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
+            <p className="mt-1 text-xs text-[var(--text-3)]">Manual workspace tools only; AI and outbound sending are not enabled.</p>
+            {!plan.test_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
+            <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" type="button"
               disabled={!owner || !plan.test_checkout_available || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
               onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>
           </div>)}
         </div>}
-        <p className="mt-4 text-sm text-gray-300"><strong>AI Employee</strong> — planned from ₹9,999/month. Not available for purchase; autonomous delivery is not released.</p>
-        {!owner && <p className="mt-3 text-xs text-gray-400">Only the workspace owner can manage billing.</p>}
+        <p className="mt-4 text-sm text-[var(--text-2)]"><strong>AI Employee</strong> — planned from ₹9,999/month. Not available for purchase; autonomous delivery is not released.</p>
+        {!owner && <p className="mt-3 text-xs text-[var(--text-3)]">Only the workspace owner can manage billing.</p>}
       </>}
-      {feedback && <p role="status" className="mt-4 text-xs text-emerald-200">{feedback}</p>}
-      {billingError && <p role="alert" className="mt-4 text-xs text-rose-200">{billingError}</p>}
+      {feedback && <p role="status" className="mt-4 text-xs text-[var(--good)]">{feedback}</p>}
+      {billingError && <p role="alert" className="mt-4 text-xs text-[var(--bad)]">{billingError}</p>}
     </section>
   );
 }
@@ -342,26 +343,26 @@ function WorkspaceSettingsPanel({ workspace, onSaved }: { workspace: Workspace; 
   }
 
   return (
-    <section aria-labelledby="workspace-settings-title" className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+    <section aria-labelledby="workspace-settings-title" className="card">
       <h2 id="workspace-settings-title" className="text-xl font-semibold">Workspace settings</h2>
       <form className="mt-4 space-y-4" onSubmit={event => void save(event)}>
         <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm text-gray-300">Business name
-            <input className="glass-input mt-2 w-full bg-transparent" value={name} onChange={event => setName(event.target.value)} maxLength={200} required />
+          <label className="block text-sm text-[var(--text-2)]">Business name
+            <input className="form-input mt-2 w-full" value={name} onChange={event => setName(event.target.value)} maxLength={200} required />
           </label>
-          <label className="block text-sm text-gray-300">Industry (optional)
-            <input className="glass-input mt-2 w-full bg-transparent" value={industry} onChange={event => setIndustry(event.target.value)} maxLength={100} />
+          <label className="block text-sm text-[var(--text-2)]">Industry (optional)
+            <input className="form-input mt-2 w-full" value={industry} onChange={event => setIndustry(event.target.value)} maxLength={100} />
           </label>
-          <label className="block text-sm text-gray-300">Website (optional)
-            <input className="glass-input mt-2 w-full bg-transparent" type="url" value={website} onChange={event => setWebsite(event.target.value)} maxLength={300} placeholder="https://example.com" />
+          <label className="block text-sm text-[var(--text-2)]">Website (optional)
+            <input className="form-input mt-2 w-full" type="url" value={website} onChange={event => setWebsite(event.target.value)} maxLength={300} placeholder="https://example.com" />
           </label>
-          <label className="block text-sm text-gray-300">Timezone
-            <input className="glass-input mt-2 w-full bg-transparent" value={timezone} onChange={event => setTimezone(event.target.value)} minLength={3} maxLength={64} placeholder="Asia/Kolkata" required />
+          <label className="block text-sm text-[var(--text-2)]">Timezone
+            <input className="form-input mt-2 w-full" value={timezone} onChange={event => setTimezone(event.target.value)} minLength={3} maxLength={64} placeholder="Asia/Kolkata" required />
           </label>
         </fieldset>
-        <button type="submit" className="button-light" disabled={saving}>{saving ? "Saving…" : "Save settings"}</button>
-        {message && <p role="status" className="text-sm text-emerald-200">{message}</p>}
-        {error && <p role="alert" className="text-sm text-rose-200">{error}</p>}
+        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save settings"}</button>
+        {message && <p role="status" className="text-sm text-[var(--good)]">{message}</p>}
+        {error && <p role="alert" className="text-sm text-[var(--bad)]">{error}</p>}
       </form>
     </section>
   );
@@ -433,35 +434,54 @@ function WorkspaceTeamPanel({ workspace, entitled }: { workspace: Workspace; ent
   const pending = invitations.filter(item => !item.accepted_at && !item.revoked_at && Date.parse(item.expires_at) > Date.now());
 
   return (
-    <details className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+    <details className="card">
       <summary className="cursor-pointer text-xl font-semibold">Workspace team</summary>
-      {loading && <p role="status" className="mt-4 text-sm text-gray-300">Loading workspace team…</p>}
+      {loading && <p role="status" className="mt-4 text-sm text-[var(--text-2)]">Loading workspace team…</p>}
       {!loading && !loadFailed && (
-        <ul aria-label="Workspace members" className="mt-4 space-y-2 text-sm text-gray-300">
+        <ul aria-label="Workspace members" className="mt-4 space-y-2 text-sm text-[var(--text-2)]">
           {members.map(member => <li key={member.auth_user_id} className="break-all">{member.email || "Workspace member"} · {member.role}</li>)}
         </ul>
       )}
       {canManage && entitled && !loading && <form className="mt-4 space-y-3" onSubmit={event => void invite(event)}>
-        <label className="block text-sm text-gray-300">Teammate email
-          <input className="glass-input mt-2 w-full bg-transparent" value={email} onChange={event => setEmail(event.target.value)} type="email" maxLength={254} required />
+        <label className="block text-sm text-[var(--text-2)]">Teammate email
+          <input className="form-input mt-2 w-full" value={email} onChange={event => setEmail(event.target.value)} type="email" maxLength={254} required />
         </label>
-        <button type="submit" className="button-light" disabled={busy}>Create invitation</button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>Create invitation</button>
       </form>}
-      {code && <label className="mt-4 block text-sm text-gray-300">Share this one-time code privately with the invited teammate
-        <input className="glass-input mt-2 w-full bg-transparent" value={code} onFocus={event => event.currentTarget.select()} readOnly />
+      {code && <label className="mt-4 block text-sm text-[var(--text-2)]">Share this one-time code privately with the invited teammate
+        <input className="form-input mt-2 w-full" value={code} onFocus={event => event.currentTarget.select()} readOnly />
       </label>}
-      {pending.length > 0 && <ul aria-label="Pending invitations" className="mt-4 space-y-2 text-sm text-gray-300">
+      {pending.length > 0 && <ul aria-label="Pending invitations" className="mt-4 space-y-2 text-sm text-[var(--text-2)]">
         {pending.map(item => <li key={item.id} className="flex flex-wrap items-center gap-3">
           <span className="break-all">{item.invitee_email}</span>
           <button type="button" className="underline underline-offset-4" disabled={busy} onClick={() => void revoke(item.id)}>Revoke invitation</button>
         </li>)}
       </ul>}
-      {error && <p role="alert" className="mt-4 text-sm text-rose-200">{error}</p>}
+      {error && <p role="alert" className="mt-4 text-sm text-[var(--bad)]">{error}</p>}
     </details>
   );
 }
 
-export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut: () => void; signingOut: boolean }) {
+type DashboardProps = {
+  email: string;
+  sessionError: string;
+  onSignOut: () => void;
+  signingOut: boolean;
+};
+
+const pendingSections: Partial<Record<DeckSection, string>> = {
+  outbox: "Outbox will be available when mailbox sending is connected.",
+  conversations: "Conversation history will be available when reply sync is connected.",
+  signals: "Hosted lead signals are in development.",
+  discover: "Hosted prospect discovery is in development.",
+  companies: "The company directory will be available when hosted prospect discovery is connected.",
+  controls: "Hosted campaign sending controls are in development.",
+};
+
+export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signingOut }: DashboardProps) {
+  const [section, setSection] = useState(readDeckSection);
+  const currentWorkspace = useRef("");
+  const currentCampaign = useRef("");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string>("");
   const [entitlement, setEntitlement] = useState<boolean | null>(null);
@@ -485,6 +505,45 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  useEffect(() => {
+    const onHashChange = () => setSection(readDeckSection());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const changeWorkspace = useCallback((workspaceId: string) => {
+    if (currentWorkspace.current === workspaceId) return;
+    currentWorkspace.current = workspaceId;
+    currentCampaign.current = "";
+    setEntitlement(null);
+    setJobs([]);
+    setContacts([]);
+    setCampaigns([]);
+    setCampaignContacts([]);
+    setSelectedContact("");
+    setActiveCampaign("");
+    setContactName("");
+    setContactEmail("");
+    setContactCompany("");
+    setCampaignName("");
+    setCampaignGoal("");
+    setError("");
+    setMessage("");
+    setActiveWorkspace(workspaceId);
+  }, []);
+
+  const changeCampaign = useCallback((campaignId: string) => {
+    if (currentCampaign.current === campaignId) return;
+    currentCampaign.current = campaignId;
+    setCampaignContacts([]);
+    setActiveCampaign(campaignId);
+  }, []);
+
+  function navigate(next: DeckSection) {
+    setSection(next);
+    if (readDeckSection() !== next) window.location.hash = next;
+  }
+
   const refreshWorkspaces = useCallback(async () => {
     const result = await requestApi<{ workspaces: Workspace[] }>("/api/v1/workspaces");
     let rows = result.workspaces;
@@ -497,9 +556,10 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
       rows = [created.workspace];
     }
     setWorkspaces(rows);
-    setActiveWorkspace(current => current && rows.some(workspace => workspace.id === current)
-      ? current : rows[0]?.id || "");
-  }, []);
+    if (!rows.some(workspace => workspace.id === currentWorkspace.current)) {
+      changeWorkspace(rows[0]?.id || "");
+    }
+  }, [changeWorkspace]);
 
   useEffect(() => {
     if (!activeWorkspace) { setEntitlement(null); return; }
@@ -513,11 +573,12 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
 
   const refreshJobs = useCallback(async (workspaceId: string) => {
     const result = await requestApi<{ jobs: Job[] }>(`/api/v1/workspaces/${workspaceId}/jobs`);
-    setJobs(result.jobs);
+    if (currentWorkspace.current === workspaceId) setJobs(result.jobs);
   }, []);
 
   const refreshContacts = useCallback(async (workspaceId: string) => {
     const result = await requestApi<{ contacts: Contact[] }>(`/api/v1/workspaces/${workspaceId}/contacts`);
+    if (currentWorkspace.current !== workspaceId) return;
     setContacts(result.contacts);
     setSelectedContact(current => result.contacts.some(contact => contact.id === current)
       ? current : result.contacts[0]?.id || "");
@@ -525,16 +586,20 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
 
   const refreshCampaigns = useCallback(async (workspaceId: string) => {
     const result = await requestApi<{ campaigns: Campaign[] }>(`/api/v1/workspaces/${workspaceId}/campaigns`);
+    if (currentWorkspace.current !== workspaceId) return;
     setCampaigns(result.campaigns);
-    setActiveCampaign(current => result.campaigns.some(campaign => campaign.id === current)
-      ? current : result.campaigns[0]?.id || "");
-  }, []);
+    if (!result.campaigns.some(campaign => campaign.id === currentCampaign.current)) {
+      changeCampaign(result.campaigns[0]?.id || "");
+    }
+  }, [changeCampaign]);
 
   const refreshCampaignContacts = useCallback(async (workspaceId: string, campaignId: string) => {
     const result = await requestApi<{ contacts: Contact[] }>(
       `/api/v1/workspaces/${workspaceId}/campaigns/${campaignId}/contacts`,
     );
-    setCampaignContacts(result.contacts);
+    if (currentWorkspace.current === workspaceId && currentCampaign.current === campaignId) {
+      setCampaignContacts(result.contacts);
+    }
   }, []);
 
   useEffect(() => {
@@ -548,23 +613,26 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
   useEffect(() => {
     if (!activeWorkspace || entitlement !== true) { setJobs([]); setContacts([]); setCampaigns([]); return; }
     let cancelled = false;
-    setContacts([]);
-    setCampaigns([]);
-    setActiveCampaign("");
-    void refreshJobs(activeWorkspace).catch(cause => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load jobs");
-    });
     void refreshContacts(activeWorkspace).catch(cause => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load contacts");
     });
     void refreshCampaigns(activeWorkspace).catch(cause => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load campaigns");
     });
+    return () => { cancelled = true; };
+  }, [activeWorkspace, entitlement, refreshContacts, refreshCampaigns]);
+
+  useEffect(() => {
+    if (!activeWorkspace || entitlement !== true || section !== "activity") return;
+    let cancelled = false;
+    void refreshJobs(activeWorkspace).catch(cause => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load jobs");
+    });
     const interval = window.setInterval(() => {
-      void refreshJobs(activeWorkspace).catch(() => { /* Keep existing state during transient errors. */ });
+      void refreshJobs(activeWorkspace).catch(() => { /* Keep the last visible result during transient errors. */ });
     }, 8000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [activeWorkspace, entitlement, refreshJobs, refreshContacts, refreshCampaigns]);
+  }, [activeWorkspace, entitlement, section, refreshJobs]);
 
   useEffect(() => {
     if (!activeWorkspace || entitlement !== true || !activeCampaign) { setCampaignContacts([]); return; }
@@ -591,8 +659,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
         method: "POST", body: JSON.stringify({ name: workspaceName.trim(), slug: workspaceSlug.trim() }),
       });
       setWorkspaces(current => [result.workspace, ...current]);
-      setEntitlement(false);
-      setActiveWorkspace(result.workspace.id);
+      changeWorkspace(result.workspace.id);
       setWorkspaceName("");
       setWorkspaceSlug("");
       setMessage("Your private workspace was created successfully.");
@@ -636,8 +703,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
         method: "POST", body: JSON.stringify({ token: inviteCode.trim() }),
       });
       setWorkspaces(current => [workspace, ...current.filter(item => item.id !== workspace.id)]);
-      if (workspace.id !== activeWorkspace) setEntitlement(null);
-      setActiveWorkspace(workspace.id);
+      changeWorkspace(workspace.id);
       setInviteCode("");
       setMessage("You joined the workspace.");
     } catch (cause) {
@@ -674,7 +740,7 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
         method: "POST", body: JSON.stringify({ name: campaignName.trim(), goal: campaignGoal.trim() }),
       });
       setCampaignName(""); setCampaignGoal("");
-      setMessage("Draft campaign saved. Nothing will be sent.");
+      setMessage("Campaign draft saved.");
       await refreshCampaigns(activeWorkspace);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not create draft");
@@ -688,161 +754,169 @@ export function HostedWorkspaceDashboard({ onSignOut, signingOut }: { onSignOut:
       await requestApi(`/api/v1/workspaces/${activeWorkspace}/campaigns/${activeCampaign}/contacts`, {
         method: "POST", body: JSON.stringify({ contact_id: selectedContact }),
       });
-      setMessage("Contact attached to the draft. No outreach was triggered.");
+      setMessage("Contact attached to the draft.");
       await refreshCampaignContacts(activeWorkspace, activeCampaign);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not attach contact");
     } finally { setBusy(false); }
   }
 
+  const updateBillingEntitlement = useCallback((paid: boolean) => {
+    if (activeWorkspace === currentWorkspace.current) setEntitlement(paid);
+  }, [activeWorkspace]);
   const selected = workspaces.find(workspace => workspace.id === activeWorkspace);
+  const workspaceHome = section === "today" || !selected;
+  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity";
   return (
-    <div className="w-full max-w-4xl space-y-6" aria-label="Your Zyvello workspaces">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 px-3 py-1 text-xs text-emerald-200"><ShieldCheck className="h-4 w-4" /> Verified Zyvello account</span>
-          <h1 className="mt-4 text-3xl font-semibold">Your workspace</h1>
-          <p className="mt-2 text-sm text-gray-400">Each agency has its own data. Only its members can access it.</p>
-        </div>
-        <button className="rounded-full border border-white/20 px-5 py-2 text-sm text-white hover:bg-white/10" type="button" disabled={signingOut} onClick={onSignOut}>{signingOut ? "Signing out…" : "Sign out"}</button>
-      </div>
+    <HostedCommandDeck email={email} section={section} onNavigate={navigate} onSignOut={onSignOut} signingOut={signingOut}>
+      <div className="space-y-6">
+      {sessionError && <p role="alert" className="banner bad">{sessionError}</p>}
+      {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-4 text-sm text-[var(--bad)]">{error}</p>}
+      {message && <p role="status" className="rounded-xl border border-emerald-400/30 bg-emerald-900/20 p-4 text-sm text-[var(--good)]">{message}</p>}
 
-      {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-4 text-sm text-rose-200">{error}</p>}
-      {message && <p role="status" className="rounded-xl border border-emerald-400/30 bg-emerald-900/20 p-4 text-sm text-emerald-200">{message}</p>}
-
-      {loading ? <p role="status" className="text-gray-300">Loading your workspaces…</p> : <>
-        {workspaces.length > 0 && <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
-          <div className="flex items-center gap-3"><BriefcaseBusiness className="h-5 w-5 text-violet-300" /><h2 className="text-xl font-semibold">Agency workspaces</h2></div>
-          <label className="mt-5 block text-sm text-gray-300" htmlFor="workspace-select">Current workspace</label>
-          <select id="workspace-select" className="mt-2 w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white" value={activeWorkspace} onChange={event => { setEntitlement(null); setActiveWorkspace(event.target.value); }}>
+      {loading ? <p role="status" className="text-[var(--text-2)]">Loading your workspaces…</p> : <>
+        {selected && <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm font-medium" htmlFor="workspace-select">Workspace</label>
+          <select id="workspace-select" className="form-input max-w-sm" value={activeWorkspace} disabled={busy || acceptingInvite}
+            onChange={event => changeWorkspace(event.target.value)}>
             {workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.role})</option>)}
           </select>
-          <p className="mt-3 text-xs text-gray-400">Workspace slug: {selected?.slug}</p>
-        </section>}
+        </div>}
 
-        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES !== "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
+        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES !== "true" && <section className="card">
           <h2 className="text-xl font-semibold">Workspace access pending</h2>
-          <p className="mt-2 text-sm text-gray-300">Workspace creation is not enabled in this preview yet. Your account is verified, and no customer data is accessible without a workspace. Public onboarding will open with the subscription-gated release.</p>
+          <p className="mt-2 text-sm text-[var(--text-2)]">Workspace creation is not enabled in this preview yet. Your account is verified, and no customer data is accessible without a workspace. Public onboarding will open with the subscription-gated release.</p>
         </section>}
-        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES === "true" && <section className="rounded-3xl border border-violet-400/20 bg-violet-500/5 p-5 sm:p-7">
+        {workspaces.length === 0 && import.meta.env.VITE_ZYVELLO_ENABLE_NEW_WORKSPACES === "true" && <section className="card">
           <h2 className="text-xl font-semibold">Create your first agency workspace</h2>
-          <p className="mt-2 text-sm text-gray-300">Your customers and future campaign records will belong to this workspace.</p>
+          <p className="mt-2 text-sm text-[var(--text-2)]">Your customers and future campaign records will belong to this workspace.</p>
           <form onSubmit={event => void createWorkspace(event)} className="mt-6 space-y-4">
-            <div><label htmlFor="workspace-name" className="block text-sm text-gray-300">Agency name</label><input id="workspace-name" className="glass-input mt-2 w-full bg-transparent" value={workspaceName} onChange={event => changeName(event.target.value)} required maxLength={200} placeholder="e.g. Faik Digital" /></div>
-            <div><label htmlFor="workspace-slug" className="block text-sm text-gray-300">Workspace URL name</label><input id="workspace-slug" className="glass-input mt-2 w-full bg-transparent" value={workspaceSlug} onChange={event => setWorkspaceSlug(event.target.value)} required minLength={3} maxLength={63} pattern="[a-z0-9][a-z0-9-]{2,62}" /></div>
-            <button className="button-light flex w-full items-center justify-center gap-2" type="submit" disabled={busy}>{busy ? "Creating…" : "Create workspace"}<ArrowRight className="h-4 w-4" /></button>
+            <div><label htmlFor="workspace-name" className="block text-sm text-[var(--text-2)]">Agency name</label><input id="workspace-name" className="form-input mt-2 w-full" value={workspaceName} onChange={event => changeName(event.target.value)} required maxLength={200} placeholder="e.g. Faik Digital" /></div>
+            <div><label htmlFor="workspace-slug" className="block text-sm text-[var(--text-2)]">Workspace URL name</label><input id="workspace-slug" className="form-input mt-2 w-full" value={workspaceSlug} onChange={event => setWorkspaceSlug(event.target.value)} required minLength={3} maxLength={63} pattern="[a-z0-9][a-z0-9-]{2,62}" /></div>
+            <button className="btn btn-primary flex w-full items-center justify-center gap-2" type="submit" disabled={busy}>{busy ? "Creating…" : "Create workspace"}<ArrowRight className="h-4 w-4" /></button>
           </form>
         </section>}
 
-        {selected && (selected.role === "owner" || selected.role === "admin") && (
+        {section === "settings" && selected && (selected.role === "owner" || selected.role === "admin") && (
           <WorkspaceSettingsPanel key={`settings-${selected.id}`} workspace={selected} onSaved={updated =>
             setWorkspaces(current => current.map(workspace => workspace.id === updated.id ? updated : workspace))
           } />
         )}
-        {selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
-        <details className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+        {section === "settings" && selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
+        {workspaceHome && <details className="card">
           <summary className="cursor-pointer text-sm font-medium">Join a workspace with an invitation</summary>
           <form className="mt-4 space-y-3" onSubmit={event => void acceptInvitation(event)}>
-            <label className="block text-sm text-gray-300">Invitation code
-              <input className="glass-input mt-2 w-full bg-transparent" value={inviteCode} onChange={event => setInviteCode(event.target.value)} autoComplete="off" minLength={32} maxLength={128} required />
+            <label className="block text-sm text-[var(--text-2)]">Invitation code
+              <input className="form-input mt-2 w-full" value={inviteCode} onChange={event => setInviteCode(event.target.value)} autoComplete="off" minLength={32} maxLength={128} required />
             </label>
-            <button type="submit" className="button-light" disabled={acceptingInvite}>{acceptingInvite ? "Joining…" : "Join workspace"}</button>
+            <button type="submit" className="btn btn-primary" disabled={acceptingInvite}>{acceptingInvite ? "Joining…" : "Join workspace"}</button>
           </form>
-        </details>
-        {selected && entitlement === null && <p role="status" className="text-sm text-gray-300">Checking subscription access…</p>}
-        {selected && entitlement === false && <section className="rounded-3xl border border-violet-400/25 bg-violet-500/5 p-5 sm:p-7">
-          <h2 className="text-xl font-semibold">Explore Zyvello — free account</h2>
-          <p className="mt-2 text-sm text-gray-300">Your workspace is ready. An active subscription unlocks contacts, campaign drafts, and workspace checks.</p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {["Business contacts", "Campaign drafts", "Workspace checks"].map(feature =>
-              <div key={feature} className="rounded-xl border border-white/10 bg-black/20 p-4">
-                <p className="font-medium text-white">{feature}</p>
-                <p className="mt-1 text-xs text-gray-400">Subscription required</p>
-              </div>
-            )}
-          </div>
-          <p className="mt-4 text-sm text-violet-200">Review subscription options below to unlock paid tools when checkout is available.</p>
+        </details>}
+        {selected && (workspaceHome || requiresSubscription) && entitlement === null &&
+          <p role="status" className="muted">Checking subscription access…</p>}
+        {selected && (workspaceHome || requiresSubscription) && entitlement === false && <section className="card">
+          <h3 className="text-xl font-semibold">Explore Zyvello</h3>
+          <p className="mt-2 text-sm text-[var(--text-2)]">An active subscription unlocks contacts, campaign drafts, and workspace activity.</p>
+          <button type="button" className="btn btn-primary mt-4" onClick={() => navigate("account")}>View subscription options</button>
         </section>}
-        {selected && entitlement === true && <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Workspace contacts">
+        {selected && workspaceHome && entitlement === true && <section className="card">
+          <h3 className="text-xl font-semibold">{selected.name}</h3>
+          <div className="btn-group">
+            <button type="button" className="btn btn-secondary" onClick={() => navigate("contacts")}>Open contacts</button>
+            <button type="button" className="btn btn-secondary" onClick={() => navigate("campaigns")}>Open campaigns</button>
+          </div>
+        </section>}
+        {selected && entitlement === true && section === "contacts" &&
+          <section className="card" aria-label="Workspace contacts">
             <h2 className="text-xl font-semibold">Contacts</h2>
-            <p className="mt-1 text-sm text-gray-400">Private to {selected.name}. No emails are sent.</p>
+            <p className="mt-1 text-sm text-[var(--text-3)]">Contacts saved to {selected.name}.</p>
             <form className="mt-5 space-y-3" onSubmit={event => void createContact(event)}>
-              <label className="block text-sm text-gray-300" htmlFor="contact-name">Contact name</label>
-              <input id="contact-name" className="glass-input w-full bg-transparent" required maxLength={160}
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="contact-name">Contact name</label>
+              <input id="contact-name" className="form-input w-full" required maxLength={160}
                 value={contactName} onChange={event => setContactName(event.target.value)} placeholder="e.g. Example Contact" />
-              <label className="block text-sm text-gray-300" htmlFor="contact-email">Email address</label>
-              <input id="contact-email" type="email" className="glass-input w-full bg-transparent" required maxLength={254}
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="contact-email">Email address</label>
+              <input id="contact-email" type="email" className="form-input w-full" required maxLength={254}
                 value={contactEmail} onChange={event => setContactEmail(event.target.value)} placeholder="person@example.com" />
-              <label className="block text-sm text-gray-300" htmlFor="contact-company">Company (optional)</label>
-              <input id="contact-company" className="glass-input w-full bg-transparent" maxLength={160}
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="contact-company">Company (optional)</label>
+              <input id="contact-company" className="form-input w-full" maxLength={160}
                 value={contactCompany} onChange={event => setContactCompany(event.target.value)} placeholder="Example Agency" />
-              <button className="button-light w-full" type="submit" disabled={busy}>{busy ? "Saving…" : "Save contact"}</button>
+              <button className="btn btn-primary w-full" type="submit" disabled={busy}>{busy ? "Saving…" : "Save contact"}</button>
             </form>
             <div className="mt-6 space-y-2" aria-label="Saved contacts">
-              {contacts.length === 0 ? <p className="text-sm text-gray-400">No contacts saved yet.</p> : contacts.map(contact =>
-                <div key={contact.id} className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <p className="text-sm font-medium text-white">{contact.full_name}</p>
-                  <p className="mt-1 break-all text-xs text-gray-300">{contact.email}</p>
-                  {contact.company && <p className="mt-1 text-xs text-gray-400">{contact.company}</p>}
+              {contacts.length === 0 ? <p className="text-sm text-[var(--text-3)]">No contacts saved yet.</p> : contacts.map(contact =>
+                <div key={contact.id} className="inset rounded-xl p-3">
+                  <p className="text-sm font-medium text-[var(--text)]">{contact.full_name}</p>
+                  <p className="mt-1 break-all text-xs text-[var(--text-2)]">{contact.email}</p>
+                  {contact.company && <p className="mt-1 text-xs text-[var(--text-3)]">{contact.company}</p>}
                 </div>,
               )}
             </div>
-          </section>
-
-          <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7" aria-label="Campaign drafts">
+          </section>}
+        {selected && entitlement === true && section === "campaigns" &&
+          <section className="card" aria-label="Campaign drafts">
             <h2 className="text-xl font-semibold">Campaign drafts</h2>
-            <p className="mt-1 text-sm text-gray-400">Prepare an audience. Sending remains locked.</p>
+            <p className="mt-1 text-sm text-[var(--text-3)]">Prepare a contact list for your campaign.</p>
             <form className="mt-5 space-y-3" onSubmit={event => void createCampaign(event)}>
-              <label className="block text-sm text-gray-300" htmlFor="campaign-name">Campaign name</label>
-              <input id="campaign-name" className="glass-input w-full bg-transparent" required maxLength={160}
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="campaign-name">Campaign name</label>
+              <input id="campaign-name" className="form-input w-full" required maxLength={160}
                 value={campaignName} onChange={event => setCampaignName(event.target.value)} placeholder="e.g. November agency outreach" />
-              <label className="block text-sm text-gray-300" htmlFor="campaign-goal">Goal (optional)</label>
-              <textarea id="campaign-goal" className="glass-input w-full bg-transparent" rows={3} maxLength={1000}
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="campaign-goal">Goal (optional)</label>
+              <textarea id="campaign-goal" className="form-input w-full" rows={3} maxLength={1000}
                 value={campaignGoal} onChange={event => setCampaignGoal(event.target.value)} placeholder="Describe the intended audience and offer" />
-              <button className="button-light w-full" type="submit" disabled={busy}>{busy ? "Saving…" : "Create draft"}</button>
+              <button className="btn btn-primary w-full" type="submit" disabled={busy}>{busy ? "Saving…" : "Create draft"}</button>
             </form>
-            {campaigns.length === 0 ? <p className="mt-6 text-sm text-gray-400">No campaign drafts yet.</p> : <div className="mt-6 space-y-3">
-              <label className="block text-sm text-gray-300" htmlFor="campaign-select">Draft to prepare</label>
-              <select id="campaign-select" className="w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white"
-                value={activeCampaign} onChange={event => setActiveCampaign(event.target.value)}>
+            {campaigns.length === 0 ? <p className="mt-6 text-sm text-[var(--text-3)]">No campaign drafts yet.</p> : <div className="mt-6 space-y-3">
+              <label className="block text-sm text-[var(--text-2)]" htmlFor="campaign-select">Draft to prepare</label>
+              <select id="campaign-select" className="w-full form-input"
+                value={activeCampaign} onChange={event => changeCampaign(event.target.value)}>
                 {campaigns.map(campaign => <option key={campaign.id} value={campaign.id}>{campaign.name} (draft)</option>)}
               </select>
               {contacts.length > 0 && <div className="space-y-3">
-                <label className="block text-sm text-gray-300" htmlFor="draft-contact-select">Attach an existing contact</label>
-                <select id="draft-contact-select" className="w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white"
+                <label className="block text-sm text-[var(--text-2)]" htmlFor="draft-contact-select">Attach an existing contact</label>
+                <select id="draft-contact-select" className="w-full form-input"
                   value={selectedContact} onChange={event => setSelectedContact(event.target.value)}>
                   {contacts.map(contact => <option key={contact.id} value={contact.id}>{contact.full_name}</option>)}
                 </select>
-                <button type="button" className="rounded-full border border-white/25 px-5 py-2 text-sm text-white hover:bg-white/10"
+                <button type="button" className="rounded-full border border-white/25 px-5 py-2 text-sm text-[var(--text)] hover:bg-white/10"
                   disabled={busy || !selectedContact} onClick={() => void assignContact()}>Attach to draft</button>
               </div>}
-              <p className="text-xs text-gray-400">Attached contacts: {campaignContacts.length}. No messages can be sent from drafts.</p>
+              <p className="text-xs text-[var(--text-3)]">Attached contacts: {campaignContacts.length}</p>
             </div>}
-          </section>
-        </div>}
+          </section>}
 
-        {selected && entitlement === true && <section className="rounded-3xl border border-white/15 bg-white/5 p-5 sm:p-7">
+        {selected && entitlement === true && section === "activity" && <section className="card">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h2 className="text-xl font-semibold">Background jobs</h2><p className="mt-1 text-sm text-gray-400">Database-backed, retryable, isolated to {selected.name}.</p></div>
+            <div><h2 className="text-xl font-semibold">Background jobs</h2><p className="mt-1 text-sm text-[var(--text-3)]">Database-backed, retryable, isolated to {selected.name}.</p></div>
             <button type="button" onClick={() => void refreshJobs(activeWorkspace).catch(() => setError("Refresh failed"))} className="flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm" aria-label="Refresh jobs"><RefreshCw className="h-4 w-4" /> Refresh</button>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button className="button-light" type="button" disabled={busy} onClick={() => void runHealthCheck()}>{busy ? "Processing…" : "Run safe workspace check"}</button>
-            <span className="text-xs text-amber-200">AI and outbound email are disabled</span>
+            <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void runHealthCheck()}>{busy ? "Processing…" : "Run safe workspace check"}</button>
+            <span className="text-xs text-[var(--wait)]">AI and outbound email are disabled</span>
           </div>
           <div className="mt-6 space-y-3">
-            {jobs.length === 0 ? <p className="text-sm text-gray-400">No jobs yet. Run the safe check to test the queue.</p> : jobs.map(job => <div key={job.id} className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">Workspace health check</span><span className={`flex items-center gap-1 text-xs ${job.status === "succeeded" ? "text-emerald-300" : job.status === "dead" ? "text-rose-300" : "text-amber-200"}`}>{job.status === "succeeded" ? <CheckCircle2 className="h-4 w-4" /> : <CircleAlert className="h-4 w-4" />}{job.status}</span></div>
-              <p className="mt-2 text-xs text-gray-400">Attempt {job.attempts}/{job.max_attempts} · {new Date(job.created_at).toLocaleString()}</p>
-              {job.result?.note && <p className="mt-2 text-sm text-gray-300">{job.result.note}</p>}
-              {job.last_error && <p className="mt-2 text-xs text-rose-200">{job.last_error}</p>}
+            {jobs.length === 0 ? <p className="text-sm text-[var(--text-3)]">No jobs yet. Run the safe check to test the queue.</p> : jobs.map(job => <div key={job.id} className="inset rounded-xl p-4">
+              <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{job.kind === "groq_draft" ? "Groq draft" : "Workspace health check"}</span><span className={`flex items-center gap-1 text-xs ${job.status === "succeeded" ? "text-[var(--good)]" : job.status === "dead" ? "text-[var(--bad)]" : "text-[var(--wait)]"}`}>{job.status === "succeeded" ? <CheckCircle2 className="h-4 w-4" /> : <CircleAlert className="h-4 w-4" />}{job.status}</span></div>
+              <p className="mt-2 text-xs text-[var(--text-3)]">Attempt {job.attempts}/{job.max_attempts} · {new Date(job.created_at).toLocaleString()}</p>
+              {job.result?.note && <p className="mt-2 text-sm text-[var(--text-2)]">{job.result.note}</p>}
+              {job.last_error && <p className="mt-2 text-xs text-[var(--bad)]">{job.last_error}</p>}
             </div>)}
           </div>
         </section>}
-        {selected && <BillingPanel key={`billing-${selected.id}`} workspaceId={selected.id} owner={selected.role === "owner"} onEntitlementChange={setEntitlement} />}
+        {selected && pendingSections[section] && <section className="card"><p>{pendingSections[section]}</p></section>}
+        {selected && section === "usage" && <section className="card">
+          <p>View contact, campaign draft, and team limits under My account.</p>
+          <button type="button" className="btn btn-secondary mt-4" onClick={() => navigate("account")}>View plan limits</button>
+        </section>}
+        {selected && section === "account" && <section className="card" aria-label="Account identity">
+          <p className="font-medium break-all">{email}</p>
+          <p className="muted mt-1">Verified email</p>
+        </section>}
+        {selected && <div hidden={section !== "account"}>
+          <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"}
+            onEntitlementChange={updateBillingEntitlement} />
+        </div>}
       </>}
-      <p className="text-xs leading-5 text-gray-400">Private staging only. Prospecting, email delivery, payment collection and production automation will remain unavailable until verified and enabled separately.</p>
-    </div>
+      </div>
+    </HostedCommandDeck>
   );
 }

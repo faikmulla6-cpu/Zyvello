@@ -11,6 +11,13 @@ for (const asset of ["favicon.svg", "landing/assets/agency-office.jpg", "landing
   copyFileSync(source, target);
 }
 
+// The Command Deck styles refer to the fonts by their original public paths.
+const dashboardFonts = new URL("../dist/static/fonts/", import.meta.url);
+mkdirSync(dashboardFonts, { recursive: true });
+for (const filename of ["geist.woff2", "geist-mono.woff2"]) {
+  copyFileSync(new URL(`../../harvey/web/fonts/${filename}`, import.meta.url), new URL(filename, dashboardFonts));
+}
+
 // Static hosts must be able to serve direct visits and refreshes without
 // relying on the Python server's page routes or host-specific SPA rewrites.
 for (const route of ["login", "signup", "welcome", "app", "subscription-policy"]) {
