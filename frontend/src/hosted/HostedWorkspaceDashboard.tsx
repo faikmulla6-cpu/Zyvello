@@ -217,7 +217,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
       if (response.status === "already_ended") {
         setFeedback("This test subscription has already ended.");
       } else if (response.status === "cancellation_requested" && response.at_cycle_end === true) {
-        setFeedback("Cancellation at the billing-cycle end was requested in Razorpay TEST mode. Refresh to check its signed webhook status.");
+        setFeedback("Razorpay received your Test Mode request to cancel at the end of the billing cycle. The effective date is awaiting confirmation. Refresh billing to check the subscription status.");
       } else {
         throw new Error("The provider did not confirm the cancellation request.");
       }
@@ -258,7 +258,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             {["cancelled", "completed", "expired"].includes(sub.status) && <p className="mt-2 text-xs text-gray-400">This subscription is no longer active; it does not unlock premium tools.</p>}
             {owner && !["creating", "cancelled", "completed", "expired"].includes(sub.status) && <div className="mt-3">
               {confirmCancelId === sub.id ? <div className="rounded-lg border border-amber-400/25 bg-amber-400/5 p-3">
-                <p className="text-xs text-amber-100">Request cancellation at the billing-cycle end? This stops future renewals. Razorpay's signed webhook determines the final status.</p>
+                <p className="text-xs text-amber-100">Request cancellation at the end of this billing cycle? Check your subscription status for confirmation from Razorpay.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" className="rounded-full border border-rose-300/45 px-3 py-2 text-xs text-rose-100 disabled:opacity-40" disabled={Boolean(cancellingId)} onClick={() => void cancelRenewal(sub)}>
                     {cancellingId === sub.id ? "Requesting…" : "Confirm TEST cancellation"}
