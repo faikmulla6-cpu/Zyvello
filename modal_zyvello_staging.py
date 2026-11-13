@@ -1,7 +1,7 @@
 """Isolated Zyvello staging UI, workspace API and guarded draft worker.
 
 Only deploy with a token scoped to the dedicated `zyvello` Modal workspace.
-AI drafting uses a shared named vault secret. Outbound messages are never sent.
+AI drafting uses a shared named vault secret. Campaign sending is limited to a configured pilot.
 """
 
 import os
