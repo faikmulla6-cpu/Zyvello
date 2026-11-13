@@ -1,7 +1,7 @@
 """Isolated Zyvello staging UI, workspace API and guarded draft worker.
 
 Only deploy with a token scoped to the dedicated `zyvello` Modal workspace.
-AI draft work is disabled by default. Outbound messages are never sent.
+AI drafting uses an optional named vault secret. Outbound messages are never sent.
 """
 
 import os
@@ -10,6 +10,10 @@ import modal
 
 
 app = modal.App("zyvello-staging")
+# A separate shared secret keeps the application keyring consistent across
+# the API that encrypts credentials and the worker that decrypts them.
+draft_secret_name = os.getenv("ZYVELLO_STAGING_DRAFT_SECRET", "").strip()
+draft_secrets = [modal.Secret.from_name(draft_secret_name)] if draft_secret_name else []
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1", "tzdata>=2025.2")
@@ -23,7 +27,7 @@ image = (
 
 @app.function(
     image=image, min_containers=0, max_containers=1, timeout=180,
-    secrets=[modal.Secret.from_name("zyvello-staging-worker-db")],
+    secrets=[modal.Secret.from_name("zyvello-staging-worker-db"), *draft_secrets],
 )
 def process_jobs():
     from zyvello_hosted.worker import HostedWorker
@@ -49,6 +53,7 @@ def process_jobs():
         # Billing remains fail-closed until *test* keys and the restricted
         # webhook DB role connection are supplied through Modal (not Hostinger).
         modal.Secret.from_name("zyvello-staging-billing"),
+        *draft_secrets,
     ],
 )
 @modal.asgi_app()
