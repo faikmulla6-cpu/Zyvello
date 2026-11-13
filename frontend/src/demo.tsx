@@ -45,8 +45,9 @@ const DemoOne = () => (
       <div>
         <p className="eyebrow">Hosted plans — approved prices</p>
         <h2 className="section-title">Start small.<br />Grow with control.</h2>
-        <p className="mt-5 max-w-md leading-7 text-gray-400">Base monthly pricing in INR, plus applicable taxes. Account creation is free. Paid features are limited to the currently available hosted tools, and live payments remain disabled pending merchant and release approval.</p>
+        <p className="mt-5 max-w-md leading-7 text-gray-400">Monthly plan prices in INR. Account creation is free. Hosted checkout currently runs in Test Mode.</p>
         <p className="mt-4 text-sm text-gray-400">AI Employee — from ₹9,999/month, future only. Not available for purchase.</p>
+        <a href="/subscription-policy" className="mt-4 inline-block text-sm underline underline-offset-4">Subscription policy</a>
       </div>
       <div className="grid gap-4 sm:grid-cols-3 md:grid-cols-1 lg:grid-cols-3 md:col-span-1">
         {([

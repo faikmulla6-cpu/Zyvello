@@ -665,7 +665,7 @@ def create_app(
             async def favicon() -> FileResponse:
                 return FileResponse(Path(static_dir) / "favicon.svg", media_type="image/svg+xml")
 
-        for page in ("/login", "/signup", "/app", "/welcome"):
+        for page in ("/login", "/signup", "/app", "/welcome", "/subscription-policy"):
             app.add_api_route(
                 page,
                 lambda: FileResponse(

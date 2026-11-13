@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 const required = [
   "index.html", "login/index.html", "signup/index.html",
-  "welcome/index.html", "app/index.html", "static/favicon.svg",
+  "welcome/index.html", "app/index.html", "subscription-policy/index.html", "static/favicon.svg",
 ];
 const missing = required.filter((name) => !existsSync(new URL(`../dist/${name}`, import.meta.url)));
 if (missing.length) {

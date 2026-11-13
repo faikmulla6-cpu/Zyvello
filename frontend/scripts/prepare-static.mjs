@@ -13,7 +13,7 @@ for (const asset of ["favicon.svg", "landing/assets/agency-office.jpg", "landing
 
 // Static hosts must be able to serve direct visits and refreshes without
 // relying on the Python server's page routes or host-specific SPA rewrites.
-for (const route of ["login", "signup", "welcome", "app"]) {
+for (const route of ["login", "signup", "welcome", "app", "subscription-policy"]) {
   const directory = new URL(`../dist/${route}/`, import.meta.url);
   mkdirSync(fileURLToPath(directory), { recursive: true });
   copyFileSync(new URL("../dist/index.html", import.meta.url), new URL("index.html", directory));
