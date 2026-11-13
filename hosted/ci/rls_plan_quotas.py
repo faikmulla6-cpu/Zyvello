@@ -44,6 +44,61 @@ class PlanQuotaSqlTests(unittest.TestCase):
                        paid_through=now()+interval '30 days'
                    WHERE id=%s""", (SUB,))
 
+    def test_gmail_mailbox_requires_paid_manager_and_limits_self_tests(self):
+        with psycopg.connect(DB, autocommit=True) as admin:
+            execute_sql_file(admin, "0013_gmail_connection.sql")
+            admin.execute("UPDATE zyvello.billing_subscriptions SET status='active' WHERE id=%s", (SUB,))
+        with psycopg.connect(API) as conn, conn.transaction():
+            conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+            conn.execute("""
+                INSERT INTO zyvello.gmail_mailboxes (workspace_id,email,refresh_ciphertext,connected_by_auth_user_id)
+                VALUES (%s,'gmail-ci@example.test',repeat('x',140),'test-auth-a')
+            """, (WORKSPACE,))
+            for state in ("a", "b"):
+                conn.execute("""
+                    INSERT INTO zyvello.gmail_oauth_attempts
+                        (workspace_id, auth_user_id, state_hash, verifier_ciphertext, expires_at)
+                    VALUES (%s,'test-auth-a',repeat(%s,64),'fixture',now()+interval '10 minutes')
+                    ON CONFLICT (workspace_id) DO UPDATE SET
+                        auth_user_id=EXCLUDED.auth_user_id, state_hash=EXCLUDED.state_hash,
+                        verifier_ciphertext=EXCLUDED.verifier_ciphertext, expires_at=EXCLUDED.expires_at,
+                        consumed_at=NULL
+                """, (WORKSPACE, state))
+            for expected in ("fixture", None):
+                claimed = conn.execute("""
+                    UPDATE zyvello.gmail_oauth_attempts SET consumed_at=now()
+                    WHERE workspace_id=%s AND auth_user_id='test-auth-a' AND state_hash=repeat('b',64)
+                        AND expires_at>now() AND consumed_at IS NULL RETURNING verifier_ciphertext
+                """, (WORKSPACE,)).fetchone()
+                self.assertEqual(claimed, (expected,) if expected else None)
+            self.assertEqual(conn.execute(
+                "SELECT email FROM zyvello.gmail_mailboxes WHERE workspace_id=%s", (WORKSPACE,)
+            ).fetchone(), ("gmail-ci@example.test",))
+            with self.assertRaises(InsufficientPrivilege), conn.transaction():
+                conn.execute("SELECT refresh_ciphertext FROM zyvello.gmail_mailboxes")
+            conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-b',true)")
+            self.assertIsNone(conn.execute(
+                "SELECT email FROM zyvello.gmail_mailboxes WHERE workspace_id=%s", (WORKSPACE,)
+            ).fetchone())
+            self.assertIsNone(conn.execute(
+                "SELECT * FROM zyvello.reserve_gmail_self_test(%s)", (WORKSPACE,)
+            ).fetchone())
+            conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+            self.assertEqual(conn.execute(
+                "SELECT email FROM zyvello.reserve_gmail_self_test(%s)", (WORKSPACE,)
+            ).fetchone(), ("gmail-ci@example.test",))
+            self.assertIsNone(conn.execute(
+                "SELECT * FROM zyvello.reserve_gmail_self_test(%s)", (WORKSPACE,)
+            ).fetchone())
+        with psycopg.connect(DB, autocommit=True) as admin:
+            admin.execute("UPDATE zyvello.billing_subscriptions SET status='pending' WHERE id=%s", (SUB,))
+        with psycopg.connect(API) as conn, conn.transaction():
+            conn.execute("SELECT set_config('zyvello.auth_user_id','test-auth-a',true)")
+            self.assertEqual(conn.execute(
+                "DELETE FROM zyvello.gmail_mailboxes WHERE workspace_id=%s", (WORKSPACE,)
+            ).rowcount, 1)
+
+
     @staticmethod
     def allowed(who, kind, ws=WORKSPACE):
         with psycopg.connect(API) as conn, conn.transaction():

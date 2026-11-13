@@ -4,6 +4,7 @@ import { MotionConfig } from "motion/react";
 import { DemoOne } from "@/demo";
 import { SubscriptionPolicyPage } from "@/hosted/SubscriptionPolicyPage";
 import "@/styles/globals.css";
+import "@/hosted/gmail-return";
 
 const LocalAuth = lazy(() => import("@/components/ui/sign-up").then(module => ({ default: module.AuthComponent })));
 const HostedAuth = lazy(() => import("@/hosted/HostedAuthPage").then(module => ({ default: module.HostedAuthPage })));

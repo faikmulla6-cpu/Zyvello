@@ -5,6 +5,7 @@ single-tenant SQLite state manager. Neither is safe to expose as a hosted SaaS.
 """
 
 import asyncio
+import hashlib
 import os
 from pathlib import Path
 from typing import Callable, Literal
@@ -23,7 +24,8 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .auth import IdentityProviderUnavailable, NeonTokenVerifier, TokenRejected
-from .credentials import CredentialConfigurationError, CredentialVault
+from .credentials import CredentialConfigurationError, CredentialDecryptionError, CredentialVault
+from .gmail_oauth import GmailAuthorizationError, GmailOAuth
 from .billing_store import BillingApiStore, BillingWebhookStore
 from .billing_catalog import APPROVED_MONTHLY_TIERS, FUTURE_AI_EMPLOYEE, approved_test_plan, public_monthly_catalog
 from .razorpay_billing import (MAX_WEBHOOK_BODY_BYTES, BillingRejected, BillingSettings,
@@ -142,6 +144,12 @@ class PutGroqCredentialRequest(BaseModel):
     api_key: SecretStr = Field(min_length=36, max_length=256)
 
 
+class CompleteGmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: SecretStr = Field(min_length=1, max_length=2048)
+    state: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+
+
 class ContactPermissionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: str = Field(pattern=r"^(claimed_consent|opted_out|suppressed)$")
@@ -168,6 +176,7 @@ def create_app(
     billing_webhook_override: BillingWebhookStore | None = None,
     billing_gateway_override: RazorpayGateway | None = None,
     credential_vault_override: CredentialVault | None = None,
+    gmail_oauth_override: GmailOAuth | None = None,
     enable_ai_drafts_override: bool | None = None,
     allow_workspace_creation_override: bool | None = None,
     subscription_enforcement_override: bool | None = None,
@@ -190,6 +199,8 @@ def create_app(
     credential_vault = credential_vault_override
     if credential_vault is None and os.getenv("ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"):
         credential_vault = CredentialVault(os.environ["ZYVELLO_CREDENTIAL_ENCRYPTION_KEYS"])
+    gmail_oauth = gmail_oauth_override or GmailOAuth.from_env()
+    gmail_ready = gmail_oauth is not None and credential_vault is not None
     ai_drafts_enabled = (enable_ai_drafts_override if enable_ai_drafts_override is not None
                          else os.getenv("ZYVELLO_ENABLE_AI_DRAFTS", "false").lower() == "true") and bool(credential_vault)
     # Public onboarding is enabled only on deployments with paid-feature checks.
@@ -212,6 +223,8 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def redact_credential_validation(request: Request, exc: RequestValidationError):
+        if request.method == "POST" and request.url.path.endswith("/gmail/complete"):
+            return JSONResponse(status_code=422, content={"detail": "Invalid Gmail authorization response"})
         if request.method == "PUT" and request.url.path.endswith("/credentials/groq"):
             return JSONResponse(status_code=422, content={"detail": "Invalid Groq API key"})
         return await request_validation_exception_handler(request, exc)
@@ -415,6 +428,73 @@ def create_app(
         row = await store_call(db.record_contact_permission, identity.user_id, workspace_id, contact_id,
                                action=body.action, source=body.source, evidence=body.evidence)
         return {"permission": serialize_row(row), "outbound_allowed": False}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/gmail")
+    async def gmail_status(workspace_id: UUID, identity=Depends(verified_identity),
+                           db: HostedStore = Depends(ready_store)):
+        if not gmail_ready:
+            workspace = await store_call(db.get_workspace, identity.user_id, workspace_id)
+            if workspace["role"] not in ("owner", "admin"):
+                raise HTTPException(403, "Only a workspace manager can manage the mailbox")
+            return {"connection_available": False, "email": None, "connected_at": None}
+        mailbox = await store_call(db.gmail_status, identity.user_id, workspace_id)
+        return {"connection_available": True, **serialize_row(mailbox)}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/gmail/begin", dependencies=[Depends(require_paid_workspace)])
+    async def begin_gmail(workspace_id: UUID, identity=Depends(verified_identity),
+                          db: HostedStore = Depends(ready_store)):
+        if not gmail_oauth or not credential_vault:
+            raise HTTPException(503, "Gmail connection is not configured")
+        state, verifier, authorization_url = gmail_oauth.begin()
+        await store_call(db.begin_gmail_connection, identity.user_id, workspace_id,
+                         state_hash=hashlib.sha256(state.encode()).hexdigest(),
+                         verifier_ciphertext=credential_vault.seal_gmail(workspace_id, "verifier", verifier))
+        return {"authorization_url": authorization_url, "state": state}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/gmail/complete", dependencies=[Depends(require_paid_workspace)])
+    async def complete_gmail(workspace_id: UUID, body: CompleteGmailRequest, identity=Depends(verified_identity),
+                             db: HostedStore = Depends(ready_store)):
+        if not gmail_oauth or not credential_vault:
+            raise HTTPException(503, "Gmail connection is not configured")
+        state_hash = hashlib.sha256(body.state.encode()).hexdigest()
+        encrypted = await store_call(db.claim_gmail_connection, identity.user_id, workspace_id, state_hash=state_hash)
+        try:
+            verifier = credential_vault.open_gmail(workspace_id, "verifier", encrypted)
+            email, refresh_token = await asyncio.to_thread(
+                gmail_oauth.exchange, code=body.code.get_secret_value(), verifier=verifier,
+            )
+        except CredentialDecryptionError:
+            raise HTTPException(409, "The Gmail connection could not be completed. Connect Gmail again.") from None
+        except GmailAuthorizationError as error:
+            raise HTTPException(400, str(error)) from None
+        mailbox = await store_call(
+            db.finish_gmail_connection, identity.user_id, workspace_id, state_hash=state_hash, email=email,
+            refresh_ciphertext=credential_vault.seal_gmail(workspace_id, "refresh", refresh_token),
+        )
+        return {"connection_available": True, **serialize_row(mailbox)}
+
+    @app.post("/api/v1/workspaces/{workspace_id}/gmail/test", dependencies=[Depends(require_paid_workspace)])
+    async def gmail_self_test(workspace_id: UUID, identity=Depends(verified_identity),
+                              db: HostedStore = Depends(ready_store)):
+        if not gmail_oauth or not credential_vault:
+            raise HTTPException(503, "Gmail connection is not configured")
+        mailbox = await store_call(db.reserve_gmail_self_test, identity.user_id, workspace_id)
+        try:
+            refresh_token = credential_vault.open_gmail(workspace_id, "refresh", mailbox["refresh_ciphertext"])
+            await asyncio.to_thread(gmail_oauth.send_self_test, email=mailbox["email"], refresh_token=refresh_token)
+        except CredentialDecryptionError:
+            raise HTTPException(409, "Reconnect Gmail to send a test message.") from None
+        except GmailAuthorizationError as error:
+            raise HTTPException(502, str(error)) from None
+        return {"accepted": True}
+
+    @app.delete("/api/v1/workspaces/{workspace_id}/gmail")
+    async def disconnect_gmail(workspace_id: UUID, identity=Depends(verified_identity),
+                               db: HostedStore = Depends(ready_store)):
+        if not gmail_ready:
+            raise HTTPException(503, "Gmail connection is not configured")
+        await store_call(db.disconnect_gmail, identity.user_id, workspace_id)
+        return {"disconnected": True}
 
     @app.get("/api/v1/workspaces/{workspace_id}/credentials/groq", dependencies=[Depends(require_paid_workspace)])
     async def groq_credential_status(workspace_id: UUID, identity=Depends(verified_identity),
@@ -644,6 +724,7 @@ def create_app(
             "encrypted_groq_key_storage_ready": bool(store and credential_vault),
             "job_kinds": ["workspace_health"] + (["groq_draft"] if ai_drafts_enabled else []),
             "ai_enabled": ai_drafts_enabled,
+            "gmail_connection_enabled": bool(store and gmail_ready),
             "outbound_sending_enabled": False,
             "payments_enabled": False,
             "razorpay_test_billing_ready": bool(billing_settings.enabled and billing_api and billing_webhooks),

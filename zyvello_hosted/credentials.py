@@ -6,6 +6,8 @@ All keys used here come from Modal's secret manager, not the repository.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 
@@ -35,11 +37,25 @@ class CredentialVault:
             raise ValueError("A valid Groq API key is required")
         return self._cipher.encrypt(api_key.encode("utf-8")).decode("ascii")
 
+    def seal_gmail(self, workspace_id: UUID, purpose: str, value: str) -> str:
+        plaintext = f"gmail:{workspace_id}:{purpose}:{value}"
+        return self._cipher.encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+    def open_gmail(self, workspace_id: UUID, purpose: str, ciphertext: str) -> str:
+        prefix = f"gmail:{workspace_id}:{purpose}:"
+        value = self._decrypt(ciphertext)
+        if not value.startswith(prefix):
+            raise CredentialDecryptionError("Credential is not valid for this workspace")
+        return value[len(prefix):]
+
     def open(self, ciphertext: str) -> str:
-        try:
-            value = self._cipher.decrypt(ciphertext.encode("ascii")).decode("utf-8")
-        except (InvalidToken, UnicodeDecodeError, ValueError) as error:
-            raise CredentialDecryptionError("Credential cannot be decrypted") from error
+        value = self._decrypt(ciphertext)
         if not value.startswith("gsk_"):
             raise CredentialDecryptionError("Credential format is invalid")
         return value
+
+    def _decrypt(self, ciphertext: str) -> str:
+        try:
+            return self._cipher.decrypt(ciphertext.encode("ascii")).decode("utf-8")
+        except (InvalidToken, UnicodeDecodeError, ValueError) as error:
+            raise CredentialDecryptionError("Credential cannot be decrypted") from error

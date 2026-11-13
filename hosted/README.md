@@ -134,6 +134,30 @@ Build with `VITE_ZYVELLO_ENABLE_SIGNUP=false` and the **public** Neon Auth
 URL; deploy `modal_zyvello_staging.py` into Modal environment `main`.
 No Hostinger live files or DNS records are modified by this command.
 
+### Hosted Gmail connection pilot
+
+Apply `0013_gmail_connection.sql` after migration 12 on the hosted database.
+Use a Google **Web application** OAuth client for the existing Zyvello Google
+project. Register the exact hosted frontend URL ending in `/app` as an
+authorized redirect URI, and put the OAuth values in the API's Modal secret
+configuration named `zyvello-staging-gmail`:
+
+| Environment variable | Value |
+| --- | --- |
+| `ZYVELLO_GMAIL_CLIENT_ID` | Google OAuth web client ID |
+| `ZYVELLO_GMAIL_CLIENT_SECRET` | Google OAuth web client secret |
+| `ZYVELLO_GMAIL_REDIRECT_URI` | The registered HTTPS URL ending in `/app` |
+
+A staging deployment can use a secret containing just the redirect URI until
+Google issues the web client credentials. The API also uses the existing
+credential encryption keyring. In Google
+Testing mode, add the mailbox owner as a test user. In a paid workspace, open
+Settings → Gmail → Connect Gmail, complete Google's consent flow, then use
+**Send test to my Gmail**. The test uses a fixed message and the connected
+mailbox as both sender and recipient. Disconnect removes the stored token from
+Zyvello. The Google Account connections page separately controls Google's
+authorization grant.
+
 Staging: https://zyvello--zyvello-staging-web.us-east.modal.run/app
 
 ## Razorpay subscription integration — test only
