@@ -10,7 +10,7 @@ import httpx
 
 
 GROQ_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
 class DraftProviderError(RuntimeError):
@@ -34,7 +34,9 @@ class GroqDraftClient:
         payload = {
             "model": self.model,
             "temperature": 0.4,
-            "max_tokens": 350,
+            "max_completion_tokens": 700,
+            "reasoning_effort": "low",
+            "include_reasoning": False,
             "messages": [
                 {"role": "system", "content": (
                     "Draft a short, truthful, respectful business outreach email for human review. "
