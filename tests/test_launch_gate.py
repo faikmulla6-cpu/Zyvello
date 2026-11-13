@@ -11,8 +11,6 @@ class ControlledLaunchGateTests(unittest.TestCase):
         location = Path(__file__).resolve().parents[1] / "docs/live_launch_evidence.json"
         evidence = json.loads(location.read_text(encoding="utf-8"))
         missing = blockers(evidence)
-        self.assertGreaterEqual(len(missing), 10)
-        self.assertIn("merchant_activation_verified", missing)
         self.assertIn("provider_cycle_end_cancellation_qa_verified", missing)
         self.assertIn("manual_operator_signoff", missing)
         self.assertEqual(evidence["mode"], "test")

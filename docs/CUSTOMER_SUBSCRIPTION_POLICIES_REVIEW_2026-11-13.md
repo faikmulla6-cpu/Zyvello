@@ -46,9 +46,9 @@ claims payment success.
 
 Each eligible monthly subscription renews via the customer's authorised
 Razorpay recurring mandate until cancelled. The payment method and bank
-may require further authorization. A failed, pending, paused, halted or
-unverified renewal **immediately suspends premium writes**; there is no
-grace period. Existing records remain viewable by the authorised workspace
+may require further authorization. Premium writes are suspended when Zyvello verifies a provider state that
+blocks access, or when the verified paid term expires. The proposed policy
+has no grace period after either condition. Existing records remain viewable by the authorised workspace
 where supported. This fail-closed policy is strict and must be clearly
 displayed BEFORE accepting a live recurring mandate.
 
@@ -105,10 +105,17 @@ agreements. Do not publish unverified privacy warranties.
 
 - **LEGAL ENTITY / PROPRIETOR NAME:** NOT VERIFIED
 - **PRINCIPAL BUSINESS ADDRESS:** NOT VERIFIED
-- **VERIFIED CUSTOMER SUPPORT EMAIL / PHONE:** NOT VERIFIED
+- **CUSTOMER SUPPORT:** The live Razorpay account has blank support email,
+  phone, and contact-page fields. Provide the public Zyvello support details.
 - **GRIEVANCE OFFICER CONTACT:** NOT VERIFIED
-- **GST REGISTRATION / INVOICING STATUS AND TAX CALCULATION:** NOT VERIFIED
-- **RAZORPAY ACCOUNT ACTIVATION STATE AND SUBSCRIPTIONS LIVE ENABLEMENT:** NOT VERIFIED
+- **GST REGISTRATION / INVOICING STATUS AND TAX CALCULATION:** Razorpay
+  lists this merchant as Individual and its dashboard does not support adding
+  GST for this business type. Confirm Zyvello's seller registration status and
+  customer invoice treatment independently.
+- **RAZORPAY ACCOUNT ACTIVATION AND LIVE SUBSCRIPTIONS:** Verified in the
+  live dashboard on 13 November 2026. The merchant was activated on
+  10 November and zyvello.pro is approved. Card Recurring, UPI Autopay and
+  eMandate are enabled for subscriptions.
 - **SETTLEMENT BANK / INVOICE SELLER IDENTITY:** NOT VERIFIED
 
 These are hard release blockers, not suggested placeholders to display
@@ -118,15 +125,25 @@ from primary merchant evidence and user approval.
 ## Launch gate / audit log
 
 - Account creation and initial workspace: open and free.
-- TEST payments: existing signed checkout and charged webhook verified.
-- Failure and cancel webhooks: simulated/contract tests needed; do not
-  alter an existing subscriber's active test mandate to run them.
+- Signed TEST checkout and captured payment passed for Growth and for a
+  separate Starter billing QA workspace. The Starter checkout unlocked paid
+  access after the `subscription.charged` webhook.
+- Automated failure and cancellation tests passed. Razorpay acknowledged
+  the Starter sandbox request to charge as a failure. Staging received no
+  `subscription.pending` event during the test and later applied another
+  `subscription.charged` event. Provider-side event sequencing and failed
+  renewal access suspension remain unverified.
+- Zyvello received a successful response to its cycle-end cancellation
+  request on the active Starter QA mandate. The paid workspace stayed active
+  and no terminal cancellation event was observed during the test.
+  Completion and prevention of the next renewal remain unverified.
+- The existing Growth workspace and its paid period were preserved.
 - Plan quotas must be enforced server-side and database-side before being
   promised on the public site.
 - Merge the public landing correction; remove outdated ₹4,999 Agency
   and unshipped automation claims before offering live subscriptions.
-- Verify merchant account activated and live Subscriptions feature enabled,
-  not just TEST credentials, then separately test live keys/webhook secret.
+- Verify live keys and signed webhook delivery as part of the controlled
+  production configuration and pilot.
 - Publish accurate pricing/terms/refund/privacy/merchant-contact pages,
   with independent legal/tax review.
 - First live collection should be one internally authorized capped pilot
