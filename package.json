@@ -1,0 +1,8 @@
+{
+  "name": "zyvello-hosted-build",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix frontend ci --no-audit --no-fund && npm --prefix frontend run build:hosted"
+  }
+}
