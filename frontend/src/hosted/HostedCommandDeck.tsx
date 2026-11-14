@@ -1,9 +1,9 @@
 import { LogOut } from "lucide-react";
 import type { ReactNode } from "react";
-import commandDeck from "../../../harvey/web/index.html?raw";
-import baseStyles from "../../../harvey/web/app.css?url";
-import glassStyles from "../../../harvey/web/dashboard-glass.css?url";
-import premiumStyles from "../../../harvey/web/premium-glass.css?url";
+import commandDeck from "./command-deck-assets/index.html?raw";
+import baseStyles from "./command-deck-assets/app.css?url";
+import glassStyles from "./command-deck-assets/dashboard-glass.css?url";
+import premiumStyles from "./command-deck-assets/premium-glass.css?url";
 
 const navGroups = [
   { title: "Work", items: [["today", "Today"], ["outbox", "Outbox"], ["conversations", "Conversations"]] },

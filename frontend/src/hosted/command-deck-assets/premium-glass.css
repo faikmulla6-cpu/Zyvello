@@ -1,0 +1,78 @@
+/* Frosted-glass finish, based on the supplied css.glass recipe.
+   Styling only: no data, layout visibility or interaction changes. */
+:root {
+  --frosted-panel: rgba(255, 255, 255, .62);
+  --frosted-edge: rgba(255, 255, 255, .8);
+  --frosted-inset: rgba(255, 255, 255, .38);
+  --frosted-sidebar: rgba(244, 247, 253, .62);
+  --frosted-shadow: 0 4px 30px rgba(0, 0, 0, .1);
+  --frosted-fallback: #f3f6fc;
+  --frosted-atmosphere: radial-gradient(ellipse at 95% 0%, #cbbdfd80, transparent 55%), radial-gradient(ellipse at 15% 60%, #b6d9fb70, transparent 60%), radial-gradient(ellipse at 95% 95%, #dbedcb60, transparent 55%);
+}
+:root[data-theme='dark'] {
+  --bg: #080d18;
+  --text-2: #c1cad8;
+  --text-3: #a5b1c3;
+  --frosted-panel: rgba(255, 255, 255, .12);
+  --frosted-edge: rgba(255, 255, 255, .22);
+  --frosted-inset: rgba(255, 255, 255, .06);
+  --frosted-sidebar: rgba(21, 30, 47, .64);
+  --frosted-fallback: #202a3b;
+  --frosted-atmosphere: radial-gradient(ellipse at 95% 0%, #9b63d43d, transparent 53%), radial-gradient(ellipse at 5% 65%, #3679c442, transparent 58%), radial-gradient(ellipse at 90% 95%, #4a9b9130, transparent 55%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #080d18; --text-2: #c1cad8; --text-3: #a5b1c3;
+    --frosted-panel: rgba(255, 255, 255, .12);
+    --frosted-edge: rgba(255, 255, 255, .22);
+    --frosted-inset: rgba(255, 255, 255, .06);
+    --frosted-sidebar: rgba(21, 30, 47, .64);
+    --frosted-fallback: #202a3b;
+    --frosted-atmosphere: radial-gradient(ellipse at 95% 0%, #9b63d43d, transparent 53%), radial-gradient(ellipse at 5% 65%, #3679c442, transparent 58%), radial-gradient(ellipse at 90% 95%, #4a9b9130, transparent 55%);
+  }
+}
+body { background-image: var(--frosted-atmosphere); }
+.zyvello-brand-icon { border-radius: 8px; flex-shrink: 0; }
+.account-avatar { background: #fff; border-color: #ffffff40; padding: 0; overflow: hidden; }
+.account-avatar img { width: 100%; height: 100%; display: block; }
+.control-panel.agent-only { grid-template-columns: minmax(0, 560px); }
+.sidebar, :root[data-sidebar-enhanced='true'] .sidebar-mobile-header {
+  background: var(--frosted-sidebar);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-color: var(--frosted-edge);
+}
+.card, .kpi, .queue-item, .convo-card, .table-card, .help-section details, .desk-pane {
+  background: var(--frosted-panel);
+  border: 1px solid var(--frosted-edge);
+  border-radius: 16px;
+  box-shadow: var(--frosted-shadow), inset 0 1px 0 rgba(255, 255, 255, .10);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
+.card .table-card { background: var(--frosted-inset); border-color: var(--line); box-shadow: none; }
+.section-head { border-bottom-color: var(--frosted-edge); }
+.account-link { background: var(--frosted-inset); border-color: var(--frosted-edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+.btn-secondary, .refresh-btn, .icon-btn, .sidebar-toggle {
+  background: var(--frosted-inset);
+  border: 1px solid var(--frosted-edge);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, .06), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.form-input { background: var(--frosted-inset); border-color: var(--frosted-edge); box-shadow: inset 0 1px 4px rgba(0, 0, 0, .04); }
+.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+select.form-input option { background: var(--surface); color: var(--text); }
+.log-viewer { background: var(--frosted-inset); border-color: var(--frosted-edge); }
+.sig-row + .sig-row, .account-facts > div { border-color: var(--frosted-edge); }
+.inset, .account-plan, .account-card-icon { background: var(--frosted-inset); border: 1px solid var(--line); }
+.kpi-main, .spark { min-width: 0; }
+.spark { overflow: hidden; }
+th { background: var(--frosted-fallback); }
+.empty .glyph { border: 1px solid var(--accent-line); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+@media (hover: hover) {
+  .account-link:hover, .account-link[aria-current='page'] { border-color: var(--accent-line); background: var(--accent-soft); }
+  .btn-secondary:not(:disabled):hover, .refresh-btn:hover, .icon-btn:hover, .sidebar-toggle:hover { border-color: var(--line-strong); background: var(--surface-3); }
+}
+@supports not ((backdrop-filter: blur(5px)) or (-webkit-backdrop-filter: blur(5px))) {
+  .card, .kpi, .queue-item, .convo-card, .table-card, .help-section details, .desk-pane, .sidebar { background: var(--frosted-fallback); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .card, .kpi, .queue-item, .convo-card, .table-card, .help-section details, .desk-pane, .sidebar { background: var(--frosted-fallback); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
