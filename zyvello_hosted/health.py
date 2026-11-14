@@ -342,7 +342,7 @@ def create_app(
             status_code=503,
             content={
                 "status": "not_ready",
-                "reason": "Hosted outreach and scheduled recovery are intentionally disabled before launch",
+                "reason": "Full launch requires live payments and public outreach verification",
             },
         )
 
@@ -453,6 +453,11 @@ def create_app(
     async def list_contacts(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
         rows = await store_call(db.list_contacts, identity.user_id, workspace_id)
         return {"contacts": [serialize_row(row) for row in rows]}
+
+    @app.get("/api/v1/workspaces/{workspace_id}/companies", dependencies=[Depends(require_paid_workspace)])
+    async def list_companies(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
+        rows = await store_call(db.list_companies, identity.user_id, workspace_id)
+        return {"companies": [serialize_row(row) for row in rows]}
 
     @app.post("/api/v1/workspaces/{workspace_id}/contacts", status_code=201, dependencies=[Depends(require_paid_workspace)])
     async def create_contact(workspace_id: UUID, body: CreateContactRequest, identity=Depends(verified_identity),

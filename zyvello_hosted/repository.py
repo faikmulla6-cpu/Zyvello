@@ -177,6 +177,18 @@ class HostedStore(WorkspaceManagementMixin):
             """, (workspace_id,))
             return cursor.fetchall()
 
+    def list_companies(self, auth_user_id: str, workspace_id: UUID) -> list[dict[str, Any]]:
+        with self.transaction(auth_user_id) as cursor:
+            self._require_workspace(cursor, workspace_id)
+            cursor.execute("""
+                SELECT min(btrim(company)) AS name, count(*) AS contact_count
+                FROM zyvello.contacts
+                WHERE workspace_id=%s AND btrim(company)<>''
+                GROUP BY lower(btrim(company))
+                ORDER BY lower(btrim(company))
+            """, (workspace_id,))
+            return cursor.fetchall()
+
     def create_contact(self, auth_user_id: str, workspace_id: UUID, *, full_name: str,
                        email: str, company: str = "") -> dict[str, Any]:
         from psycopg.errors import UniqueViolation
