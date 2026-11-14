@@ -57,6 +57,10 @@ class FakeStore:
         self.get_workspace(auth_user_id, workspace_id)
         return [r for r in self.contacts.values() if r["workspace_id"] == workspace_id]
 
+    def list_companies(self, auth_user_id, workspace_id):
+        self.get_workspace(auth_user_id, workspace_id)
+        return [{"name": "Example Company", "contact_count": 2}]
+
     def create_contact(self, auth_user_id, workspace_id, *, full_name, email, company=""):
         self.get_workspace(auth_user_id, workspace_id)
         if any(r["workspace_id"] == workspace_id and r["email"] == email.lower() for r in self.contacts.values()):
@@ -179,6 +183,7 @@ class HostedWorkspaceApiTests(unittest.TestCase):
             f"/api/v1/workspaces/{WORKSPACE_A}/campaigns",
             f"/api/v1/workspaces/{WORKSPACE_A}/jobs",
             f"/api/v1/workspaces/{WORKSPACE_A}/drafts",
+            f"/api/v1/workspaces/{WORKSPACE_A}/companies",
             f"/api/v1/workspaces/{WORKSPACE_A}/credentials/groq",
         )
         self.assertEqual(gated.get("/api/v1/workspaces", headers=headers).status_code, 200)
@@ -193,6 +198,9 @@ class HostedWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(gated.get(feature_paths[0], headers=headers).status_code, 200)
         self.assertEqual(gated.post(feature_paths[0], headers=headers,
                                     json={"full_name": "Paid User", "email": "paid@example.test"}).status_code, 201)
+        companies = gated.get(f"/api/v1/workspaces/{WORKSPACE_A}/companies", headers=headers)
+        self.assertEqual(companies.status_code, 200)
+        self.assertEqual(companies.json()["companies"], [{"name": "Example Company", "contact_count": 2}])
         self.store.paid_workspaces.remove(UUID(WORKSPACE_A))
         self.assertEqual(gated.get(feature_paths[0], headers=headers).status_code, 402)
 

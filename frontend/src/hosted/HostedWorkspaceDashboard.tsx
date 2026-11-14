@@ -18,6 +18,7 @@ type WorkspaceInvitation = {
   id: string; invitee_email: string; expires_at: string; accepted_at?: string | null; revoked_at?: string | null;
 };
 type Contact = { id: string; full_name: string; email: string; company: string; created_at: string };
+type Company = { name: string; contact_count: number };
 type Campaign = { id: string; name: string; goal: string; status: "draft"; created_at: string };
 type GeneratedDraft = { id: string; campaign_id: string; contact_id: string; draft_text: string };
 type Job = {
@@ -506,7 +507,6 @@ type DashboardProps = {
 const pendingSections: Partial<Record<DeckSection, string>> = {
   signals: "Hosted lead signals are in development.",
   discover: "Hosted prospect discovery is in development.",
-  companies: "The company directory will be available when hosted prospect discovery is connected.",
 };
 
 export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signingOut }: DashboardProps) {
@@ -527,6 +527,8 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   const [generatedDrafts, setGeneratedDrafts] = useState<GeneratedDraft[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [companies, setCompanies] = useState<Company[] | null>(null);
+  const [companiesError, setCompaniesError] = useState("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [activeCampaign, setActiveCampaign] = useState("");
   const [campaignContacts, setCampaignContacts] = useState<Contact[]>([]);
@@ -557,6 +559,8 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     setGeneratedDrafts([]);
     setJobs([]);
     setContacts([]);
+    setCompanies(null);
+    setCompaniesError("");
     setCampaigns([]);
     setCampaignContacts([]);
     setSelectedContact("");
@@ -661,6 +665,19 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     });
     return () => { cancelled = true; };
   }, [activeWorkspace, entitlement, refreshContacts, refreshCampaigns]);
+
+  useEffect(() => {
+    if (!activeWorkspace || entitlement !== true || section !== "companies") return;
+    let active = true;
+    setCompanies(null);
+    setCompaniesError("");
+    void requestApi<{ companies: Company[] }>(`/api/v1/workspaces/${activeWorkspace}/companies`)
+      .then(result => { if (active) setCompanies(result.companies); })
+      .catch(cause => {
+        if (active) setCompaniesError(cause instanceof Error ? cause.message : "Could not load companies.");
+      });
+    return () => { active = false; };
+  }, [activeWorkspace, entitlement, section]);
 
   useEffect(() => {
     if (!activeWorkspace || entitlement !== true || section !== "activity") return;
@@ -906,7 +923,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   const selected = workspaces.find(workspace => workspace.id === activeWorkspace);
   const workspaceHome = section === "today" || !selected;
   const pilotView = section === "controls" || section === "outbox" || section === "conversations" ? section : null;
-  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity";
+  const requiresSubscription = ["contacts", "companies", "campaigns", "activity"].includes(section);
   const showCampaignDelivery = campaignDeliveryAvailable && manager;
   return (
     <HostedCommandDeck email={email} section={section} onNavigate={navigate} onSignOut={onSignOut} signingOut={signingOut} campaignDeliveryAvailable={showCampaignDelivery}>
@@ -976,6 +993,20 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
             <button type="button" className="btn btn-secondary" onClick={() => navigate("contacts")}>Open contacts</button>
             <button type="button" className="btn btn-secondary" onClick={() => navigate("campaigns")}>Open campaigns</button>
           </div>
+        </section>}
+        {selected && entitlement === true && section === "companies" && <section className="card">
+          <p className="muted">Companies from your saved contacts.</p>
+          {companiesError ? <p className="mt-3 text-sm text-[var(--bad)]" role="alert">{companiesError}</p>
+            : companies === null ? <p className="mt-3 muted" role="status">Loading companies…</p>
+            : companies.length === 0 ? <>
+              <p className="mt-3">Add a company name to a contact to see it here.</p>
+              <button className="btn btn-secondary mt-4" type="button" onClick={() => navigate("contacts")}>Open contacts</button>
+            </> : <ul className="mt-4 space-y-2">
+              {companies.map(company => <li className="inset flex justify-between gap-4 rounded-xl p-3" key={company.name}>
+                <span className="break-words">{company.name}</span>
+                <span className="muted shrink-0">{company.contact_count} {company.contact_count === 1 ? "contact" : "contacts"}</span>
+              </li>)}
+            </ul>}
         </section>}
         {selected && entitlement === true && section === "contacts" &&
           <section className="card" aria-label="Workspace contacts">

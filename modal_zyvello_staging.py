@@ -34,6 +34,7 @@ image = (
 
 @app.function(
     image=image, min_containers=0, max_containers=1, timeout=180,
+    schedule=modal.Period(minutes=15),
     secrets=[modal.Secret.from_name("zyvello-staging-worker-db"), draft_secret],
 )
 def process_jobs():

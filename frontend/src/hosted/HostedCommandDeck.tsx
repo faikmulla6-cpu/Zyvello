@@ -12,7 +12,7 @@ const navGroups = [
 ] as const;
 
 const navigation = navGroups.flatMap(group => [...group.items]);
-const unreleasedSections = new Set<string>(["signals", "discover", "companies"]);
+const unreleasedSections = new Set<string>(["signals", "discover"]);
 const deliverySections = new Set<string>(["outbox", "conversations", "controls"]);
 const iconDefinitions = new DOMParser().parseFromString(commandDeck, "text/html")
   .querySelector("svg > defs")?.outerHTML ?? "";
