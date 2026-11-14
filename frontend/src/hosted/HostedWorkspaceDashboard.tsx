@@ -30,6 +30,8 @@ type Job = {
   last_error: string | null;
   created_at: string;
 };
+type BillingMode = "test" | "live";
+
 type BillingPlan = {
   code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number;
   taxes: "additional_if_applicable"; test_checkout_available: boolean; live_checkout_available: boolean;
@@ -44,6 +46,7 @@ type RazorpayCheckoutResult = { razorpay_payment_id: string; razorpay_signature:
 type RazorpayOptions = {
   key: string; subscription_id: string; name: string; description: string;
   handler: (result: RazorpayCheckoutResult) => void;
+  modal: { ondismiss: () => void };
 };
 
 declare global {
@@ -120,20 +123,25 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   const [feedback, setFeedback] = useState("");
   const [billingError, setBillingError] = useState("");
   const [checkingBilling, setCheckingBilling] = useState(true);
+  const [billingMode, setBillingMode] = useState<BillingMode>("test");
+  const livePilot = billingMode === "live";
 
   const refresh = useCallback(async () => {
     const [configured, status] = await Promise.all([
-      requestApi<{ mode: "test"; plans: BillingPlan[] }>(`/api/v1/workspaces/${workspaceId}/billing/plans`),
-      requestApi<{ mode: "test"; subscriptions: BillingSubscription[] }>(`/api/v1/workspaces/${workspaceId}/billing`),
+      requestApi<{ mode: BillingMode; plans: BillingPlan[] }>(`/api/v1/workspaces/${workspaceId}/billing/plans`),
+      requestApi<{ mode: BillingMode; subscriptions: BillingSubscription[] }>(`/api/v1/workspaces/${workspaceId}/billing`),
     ]);
-    if (configured.mode !== "test" || status.mode !== "test") throw new Error("Checkout is not in test mode");
-    return { plans: configured.plans, subscriptions: status.subscriptions };
+    if ((configured.mode !== "test" && configured.mode !== "live") || status.mode !== configured.mode) {
+      throw new Error("Workspace billing mode could not be confirmed");
+    }
+    return { mode: configured.mode, plans: configured.plans, subscriptions: status.subscriptions };
   }, [workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
     void refresh().then(result => {
       if (!cancelled) {
+        setBillingMode(result.mode);
         setPlans(result.plans);
         setSubscriptions(result.subscriptions);
         onEntitlementChange(result.subscriptions.some(sub => sub.entitled));
@@ -153,6 +161,8 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   async function refreshBilling() {
     try {
       const result = await refresh();
+      setBillingMode(result.mode);
+      setPlans(result.plans);
       setSubscriptions(result.subscriptions);
       onEntitlementChange(result.subscriptions.some(sub => sub.entitled));
       setBillingError("");
@@ -162,60 +172,68 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   }
 
   async function tryCheckout(plan: BillingPlan) {
-    if (!owner || !enabled || busyPlan || !plan.test_checkout_available) return;
+    const checkoutAvailable = livePilot
+      ? plan.code === "starter" && plan.amount_paise === 49_900 && plan.live_checkout_available
+      : plan.test_checkout_available;
+    if (!owner || !enabled || busyPlan || !checkoutAvailable) return;
     setBusyPlan(plan.code);
+    let checkoutOpened = false;
     setFeedback("");
     setBillingError("");
     try {
       const created = await requestApi<
         { status: "pending_reconciliation" } |
-        { mode: "test"; key_id: string; subscription_id: string; intent_id: string; status: "checkout_ready" }
+        { mode: BillingMode; key_id: string; subscription_id: string; intent_id: string; status: "checkout_ready" }
       >(`/api/v1/workspaces/${workspaceId}/billing/subscriptions`, {
         method: "POST",
         body: JSON.stringify({ plan_code: plan.code, idempotency_key: crypto.randomUUID().replace(/-/g, "") }),
       });
       if (created.status === "pending_reconciliation") {
-        setBillingError("This test checkout is awaiting provider reconciliation. Contact support before trying another payment.");
+        setBillingError("This checkout is awaiting provider reconciliation. Contact support before trying another payment.");
         return;
       }
-      if (created.mode !== "test" || !created.key_id.startsWith("rzp_test_") || !created.subscription_id.startsWith("sub_")) {
+      if (created.mode !== billingMode || !created.key_id.startsWith(`rzp_${billingMode}_`)
+          || !created.subscription_id.startsWith("sub_")) {
         throw new Error("Checkout safety check failed");
       }
       await loadCheckoutScript();
       if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable");
       const checkout = new window.Razorpay({
+        modal: { ondismiss: () => setBusyPlan("") },
         key: created.key_id,
         subscription_id: created.subscription_id,
-        name: "Zyvello — TEST MODE",
-        description: `${plan.name} (test payment; no live charges)`,
+        name: livePilot ? "Zyvello" : "Zyvello — TEST MODE",
+        description: livePilot ? "Starter · ₹499 per month" : `${plan.name} (test payment; no live charges)`,
         handler: result => {
           void requestApi(`/api/v1/workspaces/${workspaceId}/billing/subscriptions/${created.intent_id}/verify`, {
             method: "POST",
             body: JSON.stringify({ razorpay_payment_id: result.razorpay_payment_id,
               razorpay_signature: result.razorpay_signature }),
           }).then(async () => {
-            setFeedback("Test checkout verified. Waiting for Razorpay's signed payment webhook…");
+            setFeedback("Checkout verified. Waiting for Razorpay's signed payment webhook…");
             for (let attempt = 0; attempt < 5; attempt += 1) {
               const refreshed = await refresh();
               setSubscriptions(refreshed.subscriptions);
               onEntitlementChange(refreshed.subscriptions.some(sub => sub.entitled));
               const latest = refreshed.subscriptions.find(sub => sub.id === created.intent_id);
               if (latest?.entitled) {
-                setFeedback("Test payment confirmed. Test access is active.");
+                setFeedback(livePilot ? "Payment confirmed. Starter access is active." : "Test payment confirmed. Test access is active.");
                 return;
               }
               if (attempt < 4) await new Promise(resolve => window.setTimeout(resolve, 1500));
             }
             setFeedback("Checkout verified, but payment confirmation is still pending. Use Refresh billing to check again.");
-          }).catch(cause => setBillingError(cause instanceof Error ? cause.message : "Checkout verification failed"));
+          }).catch(cause => setBillingError(cause instanceof Error ? cause.message : "Checkout verification failed"))
+            .finally(() => setBusyPlan(""));
         },
       });
       checkout.open();
-      setFeedback("Razorpay test Checkout opened. No real money should be collected.");
+      checkoutOpened = true;
+      setFeedback(livePilot ? "Razorpay Live Checkout opened for Starter." : "Razorpay test Checkout opened. No real money should be collected.");
     } catch (cause) {
-      setBillingError(cause instanceof Error ? cause.message : "Test checkout could not start");
+      setBillingError(cause instanceof Error ? cause.message : "Checkout could not start");
     } finally {
-      setBusyPlan("");
+      if (!checkoutOpened) setBusyPlan("");
     }
   }
 
@@ -231,9 +249,9 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
         method: "POST", body: JSON.stringify({}),
       });
       if (response.status === "already_ended") {
-        setFeedback("This test subscription has already ended.");
+        setFeedback("This subscription has already ended.");
       } else if (response.status === "cancellation_requested" && response.at_cycle_end === true) {
-        setFeedback("Razorpay received your Test Mode request to cancel at the end of the billing cycle. The effective date is awaiting confirmation. Refresh billing to check the subscription status.");
+        setFeedback("Razorpay received your request to cancel at the end of the billing cycle. The effective date is awaiting confirmation. Refresh billing to check the subscription status.");
       } else {
         throw new Error("The provider did not confirm the cancellation request.");
       }
@@ -254,19 +272,19 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Billing</h2>
-          <p className="mt-1 text-sm text-[var(--text-3)]">Separate per workspace. Live payments are not enabled.</p>
+          <p className="mt-1 text-sm text-[var(--text-3)]">{livePilot ? "Private Starter pilot. Checkout authorizes recurring payments of ₹499 per month." : "Billing is managed separately for each workspace."}</p>
           <a href="/subscription-policy" className="mt-2 inline-block text-sm text-[var(--text-2)] underline underline-offset-4">Subscription policy</a>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" className="rounded-full border border-white/20 px-3 py-1 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40"
             disabled={!enabled} onClick={() => void refreshBilling()}>Refresh billing</button>
-          <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-[var(--wait)]">TEST MODE</span>
+          {enabled && <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-[var(--wait)]">{livePilot ? "LIVE PILOT" : "TEST MODE"}</span>}
         </div>
       </div>
-      {!enabled ? <p className="mt-4 text-sm text-[var(--text-2)]">{checkingBilling ? "Checking billing configuration…" : "Payment testing is not configured yet. No payment will be collected."}</p> : <>
+      {!enabled ? <p className="mt-4 text-sm text-[var(--text-2)]">{checkingBilling ? "Checking billing configuration…" : "Billing is unavailable for this workspace."}</p> : <>
         <div className="mt-5 space-y-2">
           {subscriptions.length === 0 ? <p className="text-sm text-[var(--text-3)]">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="inset rounded-xl p-3 text-sm">
-            <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Test access active" : "No paid access"}
+            <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Access active" : "No paid access"}
             {sub.paid_through && <p className="mt-1 text-xs text-[var(--text-3)]">Recorded period end: {new Date(sub.paid_through).toLocaleDateString()}</p>}
             {sub.status === "creating" && <p className="mt-2 text-xs text-[var(--wait)]">The provider response is not confirmed. Contact support before starting another checkout.</p>}
             {["pending", "halted"].includes(sub.status) && <p className="mt-2 text-xs text-[var(--wait)]">Payment recovery is needed. Paid tools remain locked, and a second checkout is blocked to prevent duplicate recurring subscriptions.</p>}
@@ -277,11 +295,11 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
                 <p className="text-xs text-[var(--wait)]">Request cancellation at the end of this billing cycle? Check your subscription status for confirmation from Razorpay.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" className="rounded-full border border-rose-300/45 px-3 py-2 text-xs text-[var(--bad)] disabled:opacity-40" disabled={Boolean(cancellingId)} onClick={() => void cancelRenewal(sub)}>
-                    {cancellingId === sub.id ? "Requesting…" : "Confirm TEST cancellation"}
+                    {cancellingId === sub.id ? "Requesting…" : "Confirm cancellation"}
                   </button>
                   <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-[var(--text)]" disabled={Boolean(cancellingId)} onClick={() => setConfirmCancelId("")}>Keep subscription</button>
                 </div>
-              </div> : <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" disabled={Boolean(cancellingId) || Boolean(busyPlan)} onClick={() => setConfirmCancelId(sub.id)}>Cancel test renewal</button>}
+              </div> : <button type="button" className="rounded-full border border-white/25 px-3 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" disabled={Boolean(cancellingId) || Boolean(busyPlan)} onClick={() => setConfirmCancelId(sub.id)}>Cancel renewal</button>}
             </div>}
           </div>)}
         </div>
@@ -294,13 +312,15 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-[var(--text-3)]">/ month</span></p>
             <p className="mt-2 text-xs text-[var(--text-2)]">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
             <p className="mt-1 text-xs text-[var(--text-3)]">Includes contact management and campaign planning.</p>
-            {!plan.test_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Approved price. Matching Razorpay TEST plan is not connected yet.</p>}
+            {livePilot && !plan.live_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Live checkout is disabled.</p>}
+            {!livePilot && !plan.test_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Matching Razorpay TEST plan is not connected yet.</p>}
             <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" type="button"
-              disabled={!owner || !plan.test_checkout_available || Boolean(busyPlan) || subscriptions.some(sub => !["cancelled", "completed", "expired"].includes(sub.status))}
-              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>
+              disabled={!owner || !(livePilot ? plan.live_checkout_available : plan.test_checkout_available) || Boolean(busyPlan) || subscriptions.some(sub =>
+                !["cancelled", "completed", "expired"].includes(sub.status) && !(livePilot && sub.status === "created"))}
+              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.live_checkout_available ? "Open live checkout" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>
           </div>)}
         </div>}
-        <p className="mt-4 text-sm text-[var(--text-2)]"><strong>AI Employee</strong> — planned from ₹9,999/month. Not available for purchase; autonomous delivery is not released.</p>
+        {!livePilot && <p className="mt-4 text-sm text-[var(--text-2)]"><strong>AI Employee</strong> — planned from ₹9,999/month.</p>}
         {!owner && <p className="mt-3 text-xs text-[var(--text-3)]">Only the workspace owner can manage billing.</p>}
       </>}
       {feedback && <p role="status" className="mt-4 text-xs text-[var(--good)]">{feedback}</p>}

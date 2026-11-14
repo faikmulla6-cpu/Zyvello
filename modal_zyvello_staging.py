@@ -13,6 +13,10 @@ app = modal.App("zyvello-staging")
 # A separate shared secret keeps the application keyring consistent across
 # the API that encrypts credentials and the worker that decrypts them.
 draft_secret = modal.Secret.from_name("zyvello-staging-drafts")
+# Attach the separate live credentials only after the pilot secret exists.
+live_billing_secrets = []
+if os.getenv("ZYVELLO_ATTACH_LIVE_BILLING_SECRET") == "true":
+    live_billing_secrets.append(modal.Secret.from_name("zyvello-staging-billing-live-pilot"))
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1", "tzdata>=2025.2")
@@ -48,10 +52,8 @@ def process_jobs():
         # Keep the billing reconciliation database credential separate from
         # payment-provider keys so owner configuration cannot overwrite it.
         modal.Secret.from_name("zyvello-staging-billing-db"),
-        # Create this Secret with ZYVELLO_RAZORPAY_MODE=disabled first.
-        # Billing remains fail-closed until *test* keys and the restricted
-        # webhook DB role connection are supplied through Modal (not Hostinger).
         modal.Secret.from_name("zyvello-staging-billing"),
+        *live_billing_secrets,
         draft_secret,
         modal.Secret.from_name("zyvello-staging-gmail"),
     ],
