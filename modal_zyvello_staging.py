@@ -5,6 +5,7 @@ AI drafting uses a shared named vault secret. Campaign sending is limited to a c
 """
 
 import os
+from uuid import UUID
 
 import modal
 
@@ -17,6 +18,9 @@ draft_secret = modal.Secret.from_name("zyvello-staging-drafts")
 live_billing_secrets = []
 if os.getenv("ZYVELLO_ATTACH_LIVE_BILLING_SECRET") == "true":
     live_billing_secrets.append(modal.Secret.from_name("zyvello-staging-billing-live-pilot"))
+test_checkout_config = modal.Secret.from_dict({
+    "ZYVELLO_TEST_CHECKOUT_WORKSPACES": os.getenv("ZYVELLO_TEST_CHECKOUT_WORKSPACES", ""),
+})
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi>=0.115,<1", "PyJWT[crypto]>=2.9,<3", "psycopg[binary]>=3.2,<4", "httpx>=0.27,<1", "tzdata>=2025.2")
@@ -54,6 +58,7 @@ def process_jobs():
         modal.Secret.from_name("zyvello-staging-billing-db"),
         modal.Secret.from_name("zyvello-staging-billing"),
         *live_billing_secrets,
+        test_checkout_config,
         draft_secret,
         modal.Secret.from_name("zyvello-staging-gmail"),
     ],
@@ -73,6 +78,11 @@ def web():
         database_url=os.environ.get("ZYVELLO_API_DATABASE_URL"),
         billing_database_url=os.environ.get("ZYVELLO_BILLING_DATABASE_URL"),
         dispatch_job=dispatch_job,
+        test_checkout_workspaces=frozenset(
+            UUID(value.strip())
+            for value in os.getenv("ZYVELLO_TEST_CHECKOUT_WORKSPACES", "").split(",")
+            if value.strip()
+        ),
         # Public self-service signup: an unpaid workspace can view pricing,
         # but every operational endpoint requires verified paid entitlement.
         allow_workspace_creation_override=True,

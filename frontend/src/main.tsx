@@ -12,7 +12,12 @@ const pagePath = window.location.pathname.replace(/\/+$/, "") || "/";
 const hostedMode = import.meta.env.VITE_ZYVELLO_HOSTED_MODE === "true";
 const isAuthPath = pagePath === "/signup" || pagePath === "/login";
 
-createRoot(document.getElementById("root")!).render(
+// Use the origin registered with Neon Auth and the hosted API.
+if (hostedMode && window.location.hostname === "www.zyvello.pro") {
+  const canonical = new URL(window.location.href);
+  canonical.hostname = "zyvello.pro";
+  window.location.replace(canonical.href);
+} else createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MotionConfig reducedMotion="user">
       <Suspense fallback={<p role="status" className="p-8 text-center">Loading Zyvello…</p>}>

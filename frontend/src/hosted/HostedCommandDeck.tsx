@@ -12,6 +12,8 @@ const navGroups = [
 ] as const;
 
 const navigation = navGroups.flatMap(group => [...group.items]);
+const unreleasedSections = new Set<string>(["signals", "discover", "companies"]);
+const deliverySections = new Set<string>(["outbox", "conversations", "controls"]);
 const iconDefinitions = new DOMParser().parseFromString(commandDeck, "text/html")
   .querySelector("svg > defs")?.outerHTML ?? "";
 
@@ -32,10 +34,16 @@ type Props = {
   onNavigate: (section: DeckSection) => void;
   onSignOut: () => void;
   signingOut: boolean;
+  campaignDeliveryAvailable: boolean;
   children: ReactNode;
 };
 
-export function HostedCommandDeck({ email, section, onNavigate, onSignOut, signingOut, children }: Props) {
+export function HostedCommandDeck({ email, section, onNavigate, onSignOut, signingOut, campaignDeliveryAvailable, children }: Props) {
+  const visibleGroups = navGroups.map(({ title, items }) => ({
+    title,
+    items: items.filter(([id]) => !unreleasedSections.has(id)
+      && (campaignDeliveryAvailable || !deliverySections.has(id))),
+  }));
   return (
     <>
       <link rel="stylesheet" href={baseStyles} />
@@ -51,7 +59,7 @@ export function HostedCommandDeck({ email, section, onNavigate, onSignOut, signi
             </a>
           </div>
           <nav aria-label="Command Deck">
-            {navGroups.map(group => (
+            {visibleGroups.map(group => (
               <div className="nav-group" key={group.title}>
                 <div className="nav-label">{group.title}</div>
                 {group.items.map(([id, label]) => (
