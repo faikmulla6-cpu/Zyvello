@@ -62,7 +62,7 @@ class HostedHealthTests(unittest.TestCase):
             self.assertEqual(client.get("/sidebar.js").status_code, 200)
             self.assertEqual(client.get("/api/auth/login").status_code, 404)
 
-    def test_only_the_private_beta_preview_can_call_the_api_from_a_browser(self):
+    def test_only_allowed_zyvello_origins_can_call_the_api_from_a_browser(self):
         headers = {
             "Origin": "https://peachpuff-curlew-471332.hostingersite.com",
             "Access-Control-Request-Method": "GET",
@@ -75,6 +75,14 @@ class HostedHealthTests(unittest.TestCase):
             "https://peachpuff-curlew-471332.hostingersite.com",
         )
         self.assertNotIn("access-control-allow-credentials", allowed.headers)
+
+        public = self.client.options(
+            "/api/v1/workspaces",
+            headers={**headers, "Origin": "https://zyvello.pro"},
+        )
+        self.assertEqual(public.status_code, 200)
+        self.assertEqual(public.headers["access-control-allow-origin"], "https://zyvello.pro")
+        self.assertNotIn("access-control-allow-credentials", public.headers)
 
         blocked = self.client.options(
             "/api/v1/workspaces",
