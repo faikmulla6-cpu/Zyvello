@@ -240,6 +240,7 @@ def create_app(
         allow_origins=[
             "https://zyvello--zyvello-staging-web.us-east.modal.run",
             "https://peachpuff-curlew-471332.hostingersite.com",
+            "https://zyvello.pro",
         ],
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],

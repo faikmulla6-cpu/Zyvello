@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, LockKeyhole, Mail } from "lucide-react";
 import { BrandIcon } from "@/components/ui/brand-icon";
 import { authClient, hostedSignUpEnabled } from "./auth-client";
 import { planPage, selectedPlan } from "./plan-selection";
@@ -245,7 +245,6 @@ export function HostedAuthPage({ page }: { page: Page }) {
       </header>
       <main className="relative z-10 flex flex-1 items-center justify-center px-5 py-12">
         <section className="auth-glass-card w-full max-w-md rounded-3xl border border-white/15 bg-black/50 p-6 shadow-2xl backdrop-blur-2xl sm:p-10" aria-label="Hosted Zyvello account">
-          <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/25 px-3 py-1 text-xs text-violet-200"><ShieldCheck className="h-3.5 w-3.5" /> Hosted private beta</p>
           {checking ? <p role="status" className="text-sm text-gray-300">Checking your session…</p>
             : !authClient ? <><h1 className="text-2xl font-semibold">Account access unavailable</h1><p className="mt-4 text-gray-300">This preview has not been connected to an authentication endpoint.</p></>
             : page !== "app" && account ? <>
@@ -295,7 +294,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
               </form>
             </> : <>
               <h1 className="text-3xl font-semibold">{isSignUp ? "Create your account." : "Welcome back."}</h1>
-              <p className="mt-3 text-sm text-gray-400">{isSignUp ? "Verify your email before accessing Zyvello." : loginWithOtp ? "Private beta members can sign in with a one-time email code." : "Sign in securely with your existing password."}</p>
+              <p className="mt-3 text-sm text-gray-400">{isSignUp ? "Verify your email before accessing Zyvello." : loginWithOtp ? "Sign in with a one-time code sent to your email." : "Sign in securely with your existing password."}</p>
               <form onSubmit={event => void submit(event)} className="mt-8 space-y-5">
                 {isSignUp && <div><label htmlFor="hosted-name" className="mb-2 block text-sm text-gray-300">Name</label><input id="hosted-name" className="glass-input w-full bg-transparent" value={name} onChange={event => setName(event.target.value)} maxLength={100} autoComplete="name" required /></div>}
                 <div><label htmlFor="hosted-email" className="mb-2 block text-sm text-gray-300">Email address</label><div className="glass-input"><Mail className="h-4 w-4 shrink-0 text-gray-400" /><input id="hosted-email" className="min-w-0 flex-1 bg-transparent py-1 outline-none" type="email" autoComplete="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} /></div></div>
@@ -304,7 +303,7 @@ export function HostedAuthPage({ page }: { page: Page }) {
               </form>
               {!isSignUp && <button type="button" className="mt-5 w-full text-center text-sm text-violet-200 underline underline-offset-4" disabled={busy} onClick={() => { setLoginWithOtp(value => !value); setError(""); setMessage(""); }}>{loginWithOtp ? "Use an existing password instead" : "Use a one-time email code instead"}</button>}
               {!isSignUp && <button type="button" className="mt-3 w-full text-center text-sm text-gray-300 underline underline-offset-4" disabled={busy} onClick={() => { setRecovering(true); setRecoveryOtpSent(false); setOtp(""); setNewPassword(""); setError(""); setMessage(""); }}>Forgot your password? Reset it with email</button>}
-              <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "Need access?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? loginPath : signupPath}>{isSignUp ? "Log in" : hostedSignUpEnabled ? "Create an account" : "Private beta details"}</a></p>
+              <p className="mt-6 text-center text-sm text-gray-400">{isSignUp ? "Already have an account?" : "New to Zyvello?"} <a className="font-medium text-white underline underline-offset-4" href={isSignUp ? loginPath : signupPath}>{isSignUp ? "Log in" : hostedSignUpEnabled ? "Create an account" : "Private beta details"}</a></p>
             </>}
           {message && <p role="status" className="mt-5 text-sm text-emerald-300">{message}</p>}
           {error && <p role="alert" className="mt-5 rounded-lg border border-rose-400/30 bg-rose-950/40 p-3 text-sm text-rose-200">{error}</p>}
