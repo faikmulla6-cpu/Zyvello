@@ -183,6 +183,7 @@ def create_app(
     billing_webhook_override: BillingWebhookStore | None = None,
     billing_gateway_override: RazorpayGateway | None = None,
     live_billing_settings_override: BillingSettings | None = None,
+    test_checkout_workspaces: frozenset[UUID] | None = None,
     live_billing_gateway_override: RazorpayGateway | None = None,
     credential_vault_override: CredentialVault | None = None,
     gmail_oauth_override: GmailOAuth | None = None,
@@ -242,7 +243,7 @@ def create_app(
             "https://peachpuff-curlew-471332.hostingersite.com",
             "https://zyvello.pro",
         ],
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
         allow_credentials=False,
     )
@@ -312,6 +313,9 @@ def create_app(
         if not settings.enabled or billing_api is None or gateway is None or billing_webhooks is None:
             raise HTTPException(503, "Workspace billing is not configured")
         return billing_api, gateway, settings
+
+    def test_checkout_allowed(workspace_id: UUID) -> bool:
+        return test_checkout_workspaces is None or workspace_id in test_checkout_workspaces
 
     def require_billing_mode(sub: dict, settings: BillingSettings) -> None:
         if (sub["provider_mode"] != settings.mode
@@ -433,7 +437,12 @@ def create_app(
                                         db: HostedStore = Depends(ready_store)):
         entitled = await store_call(db.has_paid_entitlement, identity.user_id, workspace_id)
         return {"entitled": bool(entitled), "paid_features_enforced": enforce_paid_features,
-                "checkout_available": bool(billing_settings.enabled)}
+                "checkout_available": (
+                    bool(live_billing.checkout_enabled)
+                    if live_billing.enabled and workspace_id == live_billing.workspace_id
+                    else bool(billing_settings.enabled and test_checkout_allowed(workspace_id))
+                ),
+                "campaign_delivery_available": campaign_pilot and workspace_id == pilot_workspace}
 
     @app.get("/api/v1/workspaces/{workspace_id}/jobs", dependencies=[Depends(require_paid_workspace)])
     async def list_jobs(workspace_id: UUID, identity=Depends(verified_identity), db: HostedStore = Depends(ready_store)):
@@ -706,12 +715,17 @@ def create_app(
         # Never advertise historic TEST plans at an unapproved amount.
         # Missing/mismatched provider IDs leave the approved tier visible
         # but its checkout button explicitly disabled.
-        return {"mode": "test", "plans": public_monthly_catalog(settings.plans)}
+        return {"mode": "test", "plans": public_monthly_catalog(
+            settings.plans if test_checkout_allowed(workspace_id) else None
+        )}
 
     @app.post("/api/v1/workspaces/{workspace_id}/billing/subscriptions", status_code=201)
     async def create_billing_subscription(workspace_id: UUID, body: CreateSubscriptionRequest,
                                           identity=Depends(verified_identity), billing: tuple = Depends(ready_billing)):
         api, gateway, settings = billing
+        if settings.mode == "test" and not test_checkout_allowed(workspace_id):
+            await store_call(api.list_subscriptions, identity.user_id, workspace_id)
+            raise HTTPException(403, "Checkout is unavailable for this workspace")
         if not settings.checkout_enabled:
             raise HTTPException(403, "Live pilot checkout is disabled")
         if body.plan_code not in APPROVED_MONTHLY_TIERS:

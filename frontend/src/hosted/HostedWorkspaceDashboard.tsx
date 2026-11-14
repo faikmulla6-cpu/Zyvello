@@ -31,6 +31,11 @@ type Job = {
   created_at: string;
 };
 type BillingMode = "test" | "live";
+type WorkspaceAccess = {
+  entitled: boolean;
+  checkout_available: boolean;
+  campaign_delivery_available: boolean;
+};
 
 type BillingPlan = {
   code: string; name: string; amount_paise: number; currency: "INR"; period: string; interval: number;
@@ -125,6 +130,7 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
   const [checkingBilling, setCheckingBilling] = useState(true);
   const [billingMode, setBillingMode] = useState<BillingMode>("test");
   const livePilot = billingMode === "live";
+  const checkoutAvailable = plans.some(plan => livePilot ? plan.live_checkout_available : plan.test_checkout_available);
 
   const refresh = useCallback(async () => {
     const [configured, status] = await Promise.all([
@@ -278,10 +284,11 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
         <div className="flex items-center gap-2">
           <button type="button" className="rounded-full border border-white/20 px-3 py-1 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40"
             disabled={!enabled} onClick={() => void refreshBilling()}>Refresh billing</button>
-          {enabled && <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-[var(--wait)]">{livePilot ? "LIVE PILOT" : "TEST MODE"}</span>}
+          {enabled && (livePilot || checkoutAvailable || subscriptions.length > 0) && <span className="rounded-full border border-amber-400/30 px-3 py-1 text-xs text-[var(--wait)]">{livePilot ? "LIVE PILOT" : "TEST MODE"}</span>}
         </div>
       </div>
       {!enabled ? <p className="mt-4 text-sm text-[var(--text-2)]">{checkingBilling ? "Checking billing configuration…" : "Billing is unavailable for this workspace."}</p> : <>
+        {!checkoutAvailable && <p className="mt-4 text-sm text-[var(--text-2)]">Online checkout is currently unavailable.</p>}
         <div className="mt-5 space-y-2">
           {subscriptions.length === 0 ? <p className="text-sm text-[var(--text-3)]">No subscription for this workspace yet.</p> : subscriptions.map(sub => <div key={sub.id} className="inset rounded-xl p-3 text-sm">
             <span className="font-medium">{sub.plan_code}</span> · {sub.status} · {sub.entitled ? "Access active" : "No paid access"}
@@ -312,15 +319,12 @@ function BillingPanel({ workspaceId, owner, onEntitlementChange }: { workspaceId
             <p className="mt-1 text-lg font-semibold">₹{(plan.amount_paise / 100).toLocaleString("en-IN")} <span className="text-xs font-normal text-[var(--text-3)]">/ month</span></p>
             <p className="mt-2 text-xs text-[var(--text-2)]">{plan.limits.stored_contacts.toLocaleString("en-IN")} stored contacts · {plan.limits.stored_campaign_drafts} campaign drafts · {plan.limits.workspace_members_including_owner} member(s) including owner</p>
             <p className="mt-1 text-xs text-[var(--text-3)]">Includes contact management and campaign planning.</p>
-            {livePilot && !plan.live_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Live checkout is disabled.</p>}
-            {!livePilot && !plan.test_checkout_available && <p className="mt-2 text-xs text-[var(--wait)]">Matching Razorpay TEST plan is not connected yet.</p>}
-            <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" type="button"
+            {checkoutAvailable && <button className="mt-4 rounded-full border border-violet-300/40 px-4 py-2 text-xs text-[var(--text)] hover:bg-white/10 disabled:opacity-40" type="button"
               disabled={!owner || !(livePilot ? plan.live_checkout_available : plan.test_checkout_available) || Boolean(busyPlan) || subscriptions.some(sub =>
                 !["cancelled", "completed", "expired"].includes(sub.status) && !(livePilot && sub.status === "created"))}
-              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.live_checkout_available ? "Open live checkout" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>
+              onClick={() => void tryCheckout(plan)}>{busyPlan === plan.code ? "Opening…" : plan.live_checkout_available ? "Open live checkout" : plan.test_checkout_available ? "Try test checkout" : "Checkout unavailable"}</button>}
           </div>)}
         </div>}
-        {!livePilot && <p className="mt-4 text-sm text-[var(--text-2)]"><strong>AI Employee</strong> — planned from ₹9,999/month.</p>}
         {!owner && <p className="mt-3 text-xs text-[var(--text-3)]">Only the workspace owner can manage billing.</p>}
       </>}
       {feedback && <p role="status" className="mt-4 text-xs text-[var(--good)]">{feedback}</p>}
@@ -511,7 +515,9 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   const currentCampaign = useRef("");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string>("");
-  const [entitlement, setEntitlement] = useState<boolean | null>(null);
+  const [access, setAccess] = useState<WorkspaceAccess | null>(null);
+  const entitlement = access?.entitled ?? null;
+  const campaignDeliveryAvailable = entitlement === true && access?.campaign_delivery_available === true;
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceSlug, setWorkspaceSlug] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -545,7 +551,7 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
     if (currentWorkspace.current === workspaceId) return;
     currentWorkspace.current = workspaceId;
     currentCampaign.current = "";
-    setEntitlement(null);
+    setAccess(null);
     setGroqStatus(undefined);
     setDraftTarget("");
     setGeneratedDrafts([]);
@@ -596,11 +602,11 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   }, [changeWorkspace]);
 
   useEffect(() => {
-    if (!activeWorkspace) { setEntitlement(null); return; }
+    if (!activeWorkspace) { setAccess(null); return; }
     let cancelled = false;
-    setEntitlement(null);
-    void requestApi<{ entitled: boolean }>(`/api/v1/workspaces/${activeWorkspace}/entitlement`)
-      .then(result => { if (!cancelled) setEntitlement(result.entitled); })
+    setAccess(null);
+    void requestApi<WorkspaceAccess>(`/api/v1/workspaces/${activeWorkspace}/entitlement`)
+      .then(result => { if (!cancelled) setAccess(result); })
       .catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : "Subscription status unavailable"); });
     return () => { cancelled = true; };
   }, [activeWorkspace]);
@@ -895,14 +901,15 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
   }
 
   const updateBillingEntitlement = useCallback((paid: boolean) => {
-    if (activeWorkspace === currentWorkspace.current) setEntitlement(paid);
+    if (activeWorkspace === currentWorkspace.current) setAccess(current => current && { ...current, entitled: paid });
   }, [activeWorkspace]);
   const selected = workspaces.find(workspace => workspace.id === activeWorkspace);
   const workspaceHome = section === "today" || !selected;
   const pilotView = section === "controls" || section === "outbox" || section === "conversations" ? section : null;
-  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity" || !!pilotView;
+  const requiresSubscription = section === "contacts" || section === "campaigns" || section === "activity";
+  const showCampaignDelivery = campaignDeliveryAvailable && manager;
   return (
-    <HostedCommandDeck email={email} section={section} onNavigate={navigate} onSignOut={onSignOut} signingOut={signingOut}>
+    <HostedCommandDeck email={email} section={section} onNavigate={navigate} onSignOut={onSignOut} signingOut={signingOut} campaignDeliveryAvailable={showCampaignDelivery}>
       <div className="space-y-6">
       {sessionError && <p role="alert" className="banner bad">{sessionError}</p>}
       {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-4 text-sm text-[var(--bad)]">{error}</p>}
@@ -942,10 +949,6 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
           ? <p role="status" className="card">Connecting Gmail…</p>
           : <HostedGmailConnection key={selected.id} workspaceId={selected.id} entitled={entitlement === true}
               load={loadGmail} begin={beginGmail} disconnect={disconnectGmail} sendTest={sendGmailTest} />)}
-        {section === "settings" && selected && <section className="card" aria-label="LinkedIn">
-          <h3 className="text-xl font-semibold">LinkedIn</h3>
-          <p className="muted mt-2">Messaging API access pending.</p>
-        </section>}
         {section === "settings" && selected && <WorkspaceTeamPanel key={`team-${selected.id}`} workspace={selected} entitled={entitlement === true} />}
         {section === "settings" && <details className="card">
           <summary className="cursor-pointer text-sm font-medium">Join a workspace with an invitation</summary>
@@ -959,9 +962,13 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
         {selected && (workspaceHome || requiresSubscription) && entitlement === null &&
           <p role="status" className="muted">Checking subscription access…</p>}
         {selected && (workspaceHome || requiresSubscription) && entitlement === false && <section className="card">
-          <h3 className="text-xl font-semibold">Explore Zyvello</h3>
+          <h3 className="text-xl font-semibold">{workspaceHome ? `Welcome to ${selected.name}` : "Subscription required"}</h3>
           <p className="mt-2 text-sm text-[var(--text-2)]">An active subscription unlocks contacts, campaign drafts, and workspace activity.</p>
-          <button type="button" className="btn btn-primary mt-4" onClick={() => navigate("account")}>View subscription options</button>
+          {workspaceHome && <p className="mt-2 text-sm text-[var(--text-2)]">You can update your business details and explore available plans.</p>}
+          <div className="btn-group mt-4">
+            <button type="button" className="btn btn-primary" onClick={() => navigate("account")}>View plans</button>
+            {workspaceHome && manager && <button type="button" className="btn btn-secondary" onClick={() => navigate("settings")}>Workspace settings</button>}
+          </div>
         </section>}
         {selected && workspaceHome && entitlement === true && <section className="card">
           <h3 className="text-xl font-semibold">{selected.name}</h3>
@@ -1066,10 +1073,10 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
             </div>)}
           </div>
         </section>}
-        {selected && pilotView && entitlement === true && (manager
+        {selected && pilotView && (showCampaignDelivery
           ? <HostedCampaignPilot key={selected.id + pilotView} view={pilotView} drafts={generatedDrafts} contacts={contacts}
               load={loadDeliveries} recordConsent={recordPilotConsent} send={sendPilotDraft} sync={syncPilotReply} />
-          : <p className="card muted">Campaign sending and reply checks are available to workspace managers.</p>)}
+          : <p className="card muted">Campaign delivery is unavailable for this workspace.</p>)}
         {selected && pendingSections[section] && <section className="card"><p>{pendingSections[section]}</p></section>}
         {selected && section === "usage" && <section className="card">
           <p>View contact, campaign draft, and team limits under My account.</p>
@@ -1079,10 +1086,10 @@ export function HostedWorkspaceDashboard({ email, sessionError, onSignOut, signi
           <p className="font-medium break-all">{email}</p>
           <p className="muted mt-1">Verified email</p>
         </section>}
-        {selected && <div hidden={section !== "account"}>
+        {selected && section === "account" &&
           <BillingPanel key={selected.id} workspaceId={selected.id} owner={selected.role === "owner"}
             onEntitlementChange={updateBillingEntitlement} />
-        </div>}
+        }
       </>}
       </div>
     </HostedCommandDeck>

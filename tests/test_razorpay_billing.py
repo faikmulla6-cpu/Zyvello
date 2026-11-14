@@ -283,6 +283,23 @@ class RazorpayApiTests(unittest.TestCase):
         self.assertNotIn("test_api_secret_fixture", plans.text)
         self.assertEqual(self.client.get(path + "/plans", headers=self.auth("good-b")).status_code, 404)
 
+    def test_public_workspace_has_catalog_but_cannot_start_test_checkout(self):
+        client = TestClient(create_app(
+            auth_base_url="https://identity.example.test/db/auth", store_override=FakeStore(),
+            billing_settings_override=settings(), billing_api_override=self.billing,
+            billing_webhook_override=self.webhooks, billing_gateway_override=self.gateway,
+            test_checkout_workspaces=frozenset({UUID(WORKSPACE_B)}),
+        ))
+        path = f"/api/v1/workspaces/{WORKSPACE_A}/billing"
+        plans = client.get(path + "/plans", headers=self.auth())
+        self.assertEqual(plans.status_code, 200)
+        self.assertFalse(any(plan["test_checkout_available"] for plan in plans.json()["plans"]))
+        result = client.post(path + "/subscriptions", headers=self.auth(),
+                             json={"plan_code": "starter", "idempotency_key": "public-checkout-fixture"})
+        self.assertEqual(result.status_code, 403)
+        self.assertEqual(self.gateway.calls, 0)
+        self.assertEqual(self.billing.reservations, 0)
+
     def test_create_once_verify_authorization_not_entitlement(self):
         path = f"/api/v1/workspaces/{WORKSPACE_A}/billing/subscriptions"
         body = {"plan_code": "starter", "idempotency_key": "intent-12345678"}

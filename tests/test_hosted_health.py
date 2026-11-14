@@ -78,7 +78,7 @@ class HostedHealthTests(unittest.TestCase):
 
         public = self.client.options(
             "/api/v1/workspaces",
-            headers={**headers, "Origin": "https://zyvello.pro"},
+            headers={**headers, "Origin": "https://zyvello.pro", "Access-Control-Request-Method": "PATCH"},
         )
         self.assertEqual(public.status_code, 200)
         self.assertEqual(public.headers["access-control-allow-origin"], "https://zyvello.pro")
