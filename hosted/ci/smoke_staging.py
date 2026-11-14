@@ -2,12 +2,14 @@
 
 Usage:
   python hosted/ci/smoke_staging.py
+  python hosted/ci/smoke_staging.py --expect-ai-drafts enabled
   ZYVELLO_STAGING_URL=https://... python hosted/ci/smoke_staging.py
 
 No authentication, customer data, model calls, or payment requests are sent.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -62,7 +64,13 @@ def check(name: str, condition: bool) -> None:
         raise AssertionError(name)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run read-only smoke checks against Zyvello staging.")
+    parser.add_argument(
+        "--expect-ai-drafts", choices=("enabled", "disabled"), default="disabled",
+        help="Expected AI drafting capability on this deployment (default: disabled)",
+    )
+    args = parser.parse_args(argv)
     try:
         code, _, body = get("/healthz")
         check("health endpoint alive", code == 200 and body.get("status") == "alive")
@@ -73,10 +81,9 @@ def main() -> int:
         code, _, caps = get("/api/v1/capabilities")
         check("capabilities endpoint", code == 200 and caps.get("stage") == "private_beta")
         check(
-            "public sending and paid checkout remain disabled",
+            "public sending and live checkout remain disabled",
             caps.get("outbound_sending_enabled") is False
-            and caps.get("payments_enabled") is False
-            and caps.get("ai_enabled") is False,
+            and caps.get("payments_enabled") is False,
         )
         check("Razorpay Test Mode is configured", caps.get("razorpay_test_billing_ready") is True)
         code, _, pricing = get("/api/v1/pricing")
@@ -108,6 +115,10 @@ def main() -> int:
         )
         code, _, body = get("/readyz")
         check("public readiness intentionally gated", code == 503 and body.get("status") == "not_ready")
+        check(
+            f"AI drafting capability matches expected state ({args.expect_ai_drafts})",
+            caps.get("ai_enabled") is (args.expect_ai_drafts == "enabled"),
+        )
     except Exception as error:
         print(f"SMOKE FAILED: {type(error).__name__}", file=sys.stderr)
         return 1
